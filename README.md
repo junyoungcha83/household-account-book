@@ -66,60 +66,61 @@ cd worker && echo "새토큰" | npx wrangler secret put EDIT_TOKEN
 
 ## 카드 결제 자동 연동 (Android · MacroDroid)
 
-본인+배우자 각자 폰에 매크로 1개씩 설치 → 카드사 SMS 받으면 자동 파싱 → 가계부에 즉시 추가.
+본인+배우자 각자 폰에 매크로 1개씩 설치 → 카드사 SMS 받으면 자동으로 가계부에 추가.
 
-### 매크로 설정 (한 번)
+**SMS 본문 파싱은 서버에서 합니다** — 매크로는 본문 통째로 POST 만 하면 됨. 정규식 설정 불필요.
 
-1. **MacroDroid** 설치 (Play Store, 무료. 광고 비활성은 결제). Tasker / Bixby Routines / Automate 등 다른 자동화 앱도 같은 패턴.
-2. **새 매크로 추가**:
+### 매크로 설정 (한 번, 약 3분)
 
-   **Trigger (트리거)**:
-   - SMS 수신 → 발신자: `1599-*` 또는 카드사 번호 (카드사별로 다름 — 받은 SMS 발신자 그대로)
-     - 신한카드 `1544-7000`, 삼성카드 `1588-8900`, 현대카드 `1577-6000`, KB국민 `1588-1688`, 우리 `1599-2030`, BC `1588-4000`, 롯데 `1588-8100`, 하나 `1800-1111`, NH농협 `1644-4000` (변경될 수 있음)
-   - 또는 본문 포함: `원 일시불` / `원 할부` (카드사 무관, 약간 더 광범위)
+1. **MacroDroid** 설치 ([Play Store](https://play.google.com/store/apps/details?id=com.arlosoft.macrodroid), 무료. 매크로 5개 무제한)
+2. 첫 실행 시 권한 허용 (SMS 읽기, 알림 접근)
+3. **새 매크로 추가** → 다음과 같이 구성:
 
-   **Action (동작) — HTTP 요청**:
-   - URL: `https://household-account-book-api.junyoung-cha83.workers.dev/api/transactions`
-   - Method: `POST`
-   - Content-Type: `application/json`
-   - Custom header: `X-Ingest-Token: <위에서 발급한 INGEST_TOKEN>`
-   - Body (MacroDroid 변수 사용):
-     ```json
-     {
-       "amount": {sms_body 에서 추출한 금액},
-       "merchant": "{sms_body 에서 추출한 가맹점}",
-       "source": "card-sms-mine"
-     }
-     ```
-   - (`source` 는 본인 폰은 `card-sms-mine`, 배우자 폰은 `card-sms-spouse` 등으로 구분 — 디버그용)
+#### Trigger (트리거) — 2가지 옵션
 
-### SMS 본문 파싱 (정규식)
+**옵션 A. SMS 수신 (일반 SMS 받는 경우)**
+- "Triggers" → "Messaging" → "SMS Received"
+- "Sender" 비워두면 모든 발신자, 카드사 번호 (예: 하나카드 `1800-1111`) 만 좁히려면 입력
+- 또는 "Message Content contains" → `원` 또는 `승인`
 
-카드사별로 포맷이 살짝 다른데, 대부분 다음 형태:
+**옵션 B. 알림 수신 (RCS / 카드앱 푸시 받는 경우 — 권장)**
+- "Triggers" → "Device Events" → "Notification" → "Notification Received"
+- "Application" → Google Messages (또는 카드앱)
+- "Text content contains" → `원` 또는 `승인`
+- (Android 알림 접근 권한 필요 — 매크로 저장 시 안내)
 
-```
-[Web발신]
-[XX카드]
-승인 홍**
-12,345원 일시불
-05/24 14:23
-스타벅스강남점
-누적 ...
-```
+#### Action (동작) — HTTP 요청
 
-**MacroDroid 정규식 설정** (Macro 안에서 "변수 설정" → "정규식 그룹"):
-- 금액: `([\d,]+)원\s*(?:일시불|할부)` → 첫 그룹 (콤마 제거 후 숫자)
-- 가맹점: 마지막 한국어 단어 줄 — 카드사마다 다름. 가장 신뢰성: `\d{2}/\d{2}\s+\d{2}:\d{2}\s*[\r\n]+(.+)` 같이 시각 다음 줄
-- 또는 단순: 본문 마지막에서 `누적`, `잔여한도` 같은 키워드 앞 부분
-
-**카드사 1개를 받은 SMS 그대로 알려주시면 정확한 정규식을 제가 만들어 드릴 수 있습니다.**
+- "Actions" → "Connectivity" → "HTTP Request"
+- **URL**: `https://household-account-book-api.junyoung-cha83.workers.dev/api/sms-ingest`
+- **Method**: POST
+- **Content-Type**: `application/json`
+- **Custom Headers**:
+  ```
+  X-Ingest-Token: <INGEST_TOKEN 발급값>
+  ```
+- **Body** (raw, JSON):
+  ```json
+  {"body": "[sms]", "source": "card-sms-mine"}
+  ```
+  - `[sms]` 부분에 MacroDroid 변수 삽입 (옵션 A 면 `[sms=body]`, 옵션 B 면 `[notification_text]`. 매크로 UI 의 "Insert magic text" 메뉴에서 골라 넣음)
+  - 배우자 폰에선 `"source": "card-sms-spouse"` 로 바꿈 (출처 구분 — 디버그용. 통계엔 영향 X)
 
 ### 동작 확인
 
-1. 매크로 저장 → 카드로 작은 결제 1건 (1,000원 편의점 등)
-2. SMS 도착 → 매크로 자동 실행 → 로그(MacroDroid 액션 로그)에서 200 OK 확인
-3. 가계부 앱 열면 자동으로 새 거래 표시 (visibility 자동 새로고침)
-4. 카테고리는 가맹점 룰로 자동 분류. 처음엔 "기타" 일 수 있고, 사용자가 한 번 바꾸면 다음부터 학습됨.
+1. 매크로 저장 → 카드로 작은 결제 1건 (편의점·자판기 등)
+2. SMS 도착 → 매크로 자동 실행 → MacroDroid "Action log" 에서 200 OK 확인
+3. 가계부 앱 열면 (또는 이미 켜져있으면 잠시 다른 앱 갔다 돌아오면) 새 거래 자동 표시
+4. 카테고리는 서버 default 룰 (스타벅스·CU·메가커피·지하철·이마트·유니클로 등 18개) 또는 학습된 사용자 룰로 자동 분류. 분류 결과 마음에 안 들면 거래 클릭해서 카테고리 바꾸면 다음부터 학습됨.
+
+### 파싱 실패 시
+
+서버가 `parse_failed` 응답 (HTTP 422) — MacroDroid Action log 에서 확인 가능. 그 SMS 본문을 알려주시면 서버 정규식 보강 (`parseCardSms` in `worker/src/index.js`).
+
+지원 패턴 (현재):
+- 금액: `금액 X원` (RCS 카드 UI) · `X원 일시불/할부` (일반 SMS) · `승인 ... X원` · 첫 N자리 금액
+- 가맹점: `사용처 ...` (RCS) · `가맹점 ...` · 시각 다음 줄 · 일시불/할부 다음 줄
+- 날짜: `MM/DD HH:MM` 추출, 연도는 오늘 기준
 
 ### 토큰 관리
 
@@ -137,7 +138,8 @@ cd worker && echo "새토큰" | npx wrangler secret put EDIT_TOKEN
 |---|---|---|
 | `GET  /api/data` | (없음) | 전체 JSON 읽기 |
 | `PUT  /api/data` | `X-Edit-Token` | 전체 덮어쓰기 (앱 동기화용) |
-| `POST /api/transactions` | `X-Ingest-Token` | 거래 1건 추가 (매크로용) |
+| `POST /api/transactions` | `X-Ingest-Token` | 거래 1건 추가 (구조화 데이터) |
+| `POST /api/sms-ingest` | `X-Ingest-Token` | SMS 본문 통째로 → 서버 파싱 + 거래 추가 |
 | `GET  /api/health` | (없음) | 헬스체크 |
 
 POST body:
@@ -156,6 +158,17 @@ POST body:
 ```json
 { "ok": true, "id": "t_...", "category": "식비", "date": "2026-05-24" }
 ```
+
+### POST /api/sms-ingest body
+
+```json
+{
+  "body": "<SMS 본문 통째로>",
+  "source": "card-sms-mine"
+}
+```
+
+응답 200: 거래 추가 성공. 422 `parse_failed`: 본문에서 금액 못 찾음.
 
 ## Out of scope (나중에)
 
