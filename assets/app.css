@@ -335,6 +335,26 @@ input { font-family: inherit; font-size: 16px; }  /* iOS 입력 줌 방지: 16px
 .income-list .source { color: var(--muted); font-size: .85rem; }
 .income-list .amount { font-weight: 700; font-variant-numeric: tabular-nums; }
 
+.income-row .amount-wrap {
+  display: inline-flex; align-items: center; gap: 8px;
+}
+.income-row .amount.blurred {
+  filter: blur(6px);
+  user-select: none;
+  pointer-events: none;
+  transition: filter .15s ease;
+}
+.income-row .btn-reveal {
+  font-size: .75rem;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  background: transparent;
+  border-radius: 6px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.income-row .btn-reveal:active { background: var(--border); }
+
 /* ── 설정 화면 ── */
 .settings-group {
   background: var(--card);

@@ -435,12 +435,45 @@ function renderStats() {
   if (!incomes.length) {
     incBlock.innerHTML = `<div class="muted">이번달 수입 없음 (설정에서 추가)</div>`;
   } else {
-    incBlock.innerHTML = incomes.map(i => `
-      <div class="income-row">
-        <span class="source">${escapeHtml(i.source || '(이름 없음)')} · ${escapeHtml(i.date)}</span>
-        <span class="amount">${fmtWon(i.amount)}</span>
-      </div>
-    `).join('');
+    incBlock.innerHTML = incomes.map(i => {
+      const sourceName = (i.source || '').trim();
+      const isSalary = sourceName === '월급';
+      if (isSalary) {
+        return `
+          <div class="income-row salary-row" data-revealed="false">
+            <span class="source">${escapeHtml(sourceName)} · ${escapeHtml(i.date)}</span>
+            <span class="amount-wrap">
+              <span class="amount blurred">${fmtWon(i.amount)}</span>
+              <button type="button" class="btn-reveal" data-act="reveal-salary">보기</button>
+            </span>
+          </div>
+        `;
+      }
+      return `
+        <div class="income-row">
+          <span class="source">${escapeHtml(sourceName || '(이름 없음)')} · ${escapeHtml(i.date)}</span>
+          <span class="amount">${fmtWon(i.amount)}</span>
+        </div>
+      `;
+    }).join('');
+
+    incBlock.querySelectorAll('[data-act="reveal-salary"]').forEach(btn => {
+      btn.onclick = () => {
+        const row = btn.closest('.salary-row');
+        if (!row) return;
+        const amount = row.querySelector('.amount');
+        const revealed = row.dataset.revealed === 'true';
+        if (revealed) {
+          amount.classList.add('blurred');
+          btn.textContent = '보기';
+          row.dataset.revealed = 'false';
+        } else {
+          amount.classList.remove('blurred');
+          btn.textContent = '숨기기';
+          row.dataset.revealed = 'true';
+        }
+      };
+    });
   }
 }
 
