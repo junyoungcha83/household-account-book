@@ -22,18 +22,28 @@
 - 인증: 편집 토큰 1회 입력 (헤더 "🔒 편집" 버튼)
 - 토큰 없으면 읽기 전용 (모든 입력·삭제 UI 숨김)
 
-## 데이터 모델 (KV 단일 키 JSON)
+## 데이터 모델 v2 (KV 단일 키 JSON)
 
 ```json
 {
-  "version": 1,
-  "transactions": [{ "id": "...", "date": "YYYY-MM-DD", "amount": 5000, "merchant": "...", "category": "식비", "note": "", "source": "manual" }],
-  "incomes":      [{ "id": "...", "date": "YYYY-MM-DD", "source": "월급", "amount": 3000000 }],
+  "version": 2,
+  "entries": [
+    { "id": "e_...", "type": "expense", "date": "YYYY-MM-DD",
+      "amount": 5000, "merchant": "스타벅스", "category": "식비",
+      "note": "", "source": "manual" },
+    { "id": "e_...", "type": "income",  "date": "YYYY-MM-DD",
+      "amount": 3000000, "source": "월급",
+      "note": "", "ingest_source": "card-sms-mine" }
+  ],
   "categories":   ["식비", "교통비", "학원비", "의류구매비", "기타"],
   "budgets":      { "YYYY-MM": { "total": 0, "by_category": { "식비": 0 } } },
   "category_rules": [{ "pattern": "스타벅스", "category": "식비" }]
 }
 ```
+
+- `type: "expense"` 필수 필드: merchant, category, source (매크로 출처)
+- `type: "income"` 필수 필드: source (입금자/회사명 텍스트), ingest_source (매크로 출처)
+- 옛 v1 (`transactions` + `incomes`) 데이터는 서버 GET 시 자동으로 v2 로 변환되어 반환됨. 다음 PUT 시 KV 에 v2 로 굳어짐 (1회).
 
 ## 자동 카테고리 분류
 
@@ -119,8 +129,10 @@ cd worker && echo "새토큰" | npx wrangler secret put EDIT_TOKEN
 
 지원 패턴 (현재):
 - 금액: `금액 X원` (RCS 카드 UI) · `X원 일시불/할부` (일반 SMS) · `승인 ... X원` · 첫 N자리 금액
-- 가맹점: `사용처 ...` (RCS) · `가맹점 ...` · 시각 다음 줄 · 일시불/할부 다음 줄
+- 가맹점 (지출): `사용처 ...` (RCS) · `가맹점 ...` · 시각 다음 줄 · 일시불/할부 다음 줄
+- 출처 (수입): `입금` 키워드 이후 첫 한국어 토큰 (시간·날짜 숫자 제외, "님" 자동 제거)
 - 날짜: `MM/DD HH:MM` 추출, 연도는 오늘 기준
+- type 자동 판단: 본문에 `입금`/`급여`/`월급`/`받음`/`수령` 키워드 → **수입**, 그 외 → **지출**
 
 ### 토큰 관리
 

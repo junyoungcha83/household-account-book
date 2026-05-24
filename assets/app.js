@@ -8,9 +8,8 @@ const API_BASE = 'https://household-account-book-api.junyoung-cha83.workers.dev'
 const SAVE_DEBOUNCE_MS = 800;
 
 const DEFAULT_STATE = {
-  version: 1,
-  transactions: [],
-  incomes: [],
+  version: 2,
+  entries: [],
   categories: ['식비', '교통비', '학원비', '의류구매비', '기타'],
   budgets: {},
   category_rules: [],
@@ -44,11 +43,8 @@ function fmtWonShort(n) {
   if (n >= 1e4) return `₩${Math.round(n/1e4).toLocaleString('ko-KR')}만`;
   return '₩' + n.toLocaleString('ko-KR');
 }
-function nextTxnId() {
-  return 't_' + Date.now().toString(36) + Math.random().toString(36).slice(2,6);
-}
-function nextIncomeId() {
-  return 'i_' + Date.now().toString(36) + Math.random().toString(36).slice(2,6);
+function nextEntryId() {
+  return 'e_' + Date.now().toString(36) + Math.random().toString(36).slice(2,6);
 }
 function shiftMonth(mk, delta) {
   const [y, m] = mk.split('-').map(Number);
@@ -65,18 +61,53 @@ function loadLocal() {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
-    if (parsed && Array.isArray(parsed.transactions)) return parsed;
+    // v1 (transactions) 또는 v2 (entries) 둘 다 받음
+    if (parsed && (Array.isArray(parsed.entries) || Array.isArray(parsed.transactions))) return parsed;
   } catch (e) {}
   return null;
 }
 
+// v1 (transactions + incomes) 또는 v2 (entries) → v2 통합. idempotent.
 function migrate(loaded) {
+  if (loaded && loaded.version === 2 && Array.isArray(loaded.entries)) {
+    return {
+      version: 2,
+      entries: loaded.entries,
+      categories: Array.isArray(loaded.categories) && loaded.categories.length ? loaded.categories : DEFAULT_STATE.categories.slice(),
+      budgets: (loaded.budgets && typeof loaded.budgets === 'object') ? loaded.budgets : {},
+      category_rules: Array.isArray(loaded.category_rules) ? loaded.category_rules : [],
+    };
+  }
+  // v1 → v2
+  const entries = [];
+  for (const t of (Array.isArray(loaded.transactions) ? loaded.transactions : [])) {
+    entries.push({
+      id: t.id || nextEntryId(),
+      type: 'expense',
+      date: t.date || '',
+      amount: Number(t.amount) || 0,
+      merchant: t.merchant || '',
+      category: t.category || '기타',
+      note: t.note || '',
+      source: t.source || 'manual',
+    });
+  }
+  for (const i of (Array.isArray(loaded.incomes) ? loaded.incomes : [])) {
+    entries.push({
+      id: i.id || nextEntryId(),
+      type: 'income',
+      date: i.date || '',
+      amount: Number(i.amount) || 0,
+      source: i.source || '수입',
+      note: i.note || '',
+      ingest_source: 'manual',
+    });
+  }
   return {
-    version: 1,
-    transactions: Array.isArray(loaded.transactions) ? loaded.transactions : [],
-    incomes:      Array.isArray(loaded.incomes) ? loaded.incomes : [],
-    categories:   Array.isArray(loaded.categories) && loaded.categories.length ? loaded.categories : DEFAULT_STATE.categories.slice(),
-    budgets:      (loaded.budgets && typeof loaded.budgets === 'object') ? loaded.budgets : {},
+    version: 2,
+    entries,
+    categories: Array.isArray(loaded.categories) && loaded.categories.length ? loaded.categories : DEFAULT_STATE.categories.slice(),
+    budgets: (loaded.budgets && typeof loaded.budgets === 'object') ? loaded.budgets : {},
     category_rules: Array.isArray(loaded.category_rules) ? loaded.category_rules : [],
   };
 }
@@ -148,7 +179,8 @@ async function fetchFromServer() {
     const res = await fetch(`${API_BASE}/api/data`, { cache: 'no-store' });
     if (!res.ok) return null;
     const json = await res.json();
-    if (json && Array.isArray(json.transactions)) return json;
+    // 서버가 v1 → v2 자동 변환해서 보내지만 안전하게 양쪽 받음
+    if (json && (Array.isArray(json.entries) || Array.isArray(json.transactions))) return json;
   } catch (e) {}
   return null;
 }
@@ -217,30 +249,25 @@ function learnCategory(merchant, category) {
   state.category_rules.push({ pattern, category });
 }
 
-// ── 집계 ──────────────────────────────────────
-function txnsOfMonth(mk) {
-  return state.transactions.filter(t => txnMonth(t) === mk);
+// ── 집계 (entries 기반) ─────────────────────────
+function entriesOfMonth(mk) {
+  return state.entries.filter(e => (e.date || '').slice(0, 7) === mk);
 }
-function totalOfMonth(mk) {
-  return txnsOfMonth(mk).reduce((s, t) => s + (Number(t.amount) || 0), 0);
-}
+function expensesOfMonth(mk)     { return entriesOfMonth(mk).filter(e => e.type === 'expense'); }
+function incomesOfMonth(mk)      { return entriesOfMonth(mk).filter(e => e.type === 'income'); }
+function totalExpenseOfMonth(mk) { return expensesOfMonth(mk).reduce((s,e) => s + (Number(e.amount)||0), 0); }
+function totalIncomeOfMonth(mk)  { return incomesOfMonth(mk).reduce((s,e) => s + (Number(e.amount)||0), 0); }
 function byCategoryOfMonth(mk) {
   const out = {};
   for (const c of state.categories) out[c] = 0;
-  for (const t of txnsOfMonth(mk)) {
-    const c = state.categories.includes(t.category) ? t.category : '기타';
-    out[c] = (out[c] || 0) + (Number(t.amount) || 0);
+  for (const e of expensesOfMonth(mk)) {
+    const c = state.categories.includes(e.category) ? e.category : '기타';
+    out[c] = (out[c] || 0) + (Number(e.amount) || 0);
   }
   return out;
 }
 function budgetOf(mk) {
   return state.budgets[mk] || { total: 0, by_category: {} };
-}
-function incomesOfMonth(mk) {
-  return state.incomes.filter(i => (i.date || '').slice(0, 7) === mk);
-}
-function totalIncomeOfMonth(mk) {
-  return incomesOfMonth(mk).reduce((s, i) => s + (Number(i.amount) || 0), 0);
 }
 
 // ── 렌더 ─────────────────────────────────────
@@ -253,8 +280,10 @@ function render() {
 }
 
 function renderBook() {
-  // 결산 카드
-  const used = totalOfMonth(viewMonth);
+  // 결산 카드 — 수입/지출/잔액 3줄
+  const used   = totalExpenseOfMonth(viewMonth);
+  const income = totalIncomeOfMonth(viewMonth);
+  const balance = income - used;
   const bud  = budgetOf(viewMonth);
   const total = bud.total || 0;
   const pct = total > 0 ? Math.min(100, Math.round(used / total * 100)) : 0;
@@ -262,12 +291,22 @@ function renderBook() {
   const card = document.getElementById('monthSummary');
   card.className = 'summary-card' + (over ? ' over' : '');
   card.innerHTML = `
-    <div class="total-row">
-      <span class="label">${escapeHtml(fmtMonth(viewMonth))} 사용</span>
-      <span class="amount">${fmtWon(used)}</span>
+    <div class="summary-rows">
+      <div class="srow income">
+        <span class="srow-label">수입</span>
+        <span class="srow-amount">+${fmtWon(income)}</span>
+      </div>
+      <div class="srow expense">
+        <span class="srow-label">지출</span>
+        <span class="srow-amount">−${fmtWon(used)}</span>
+      </div>
+      <div class="srow balance ${balance < 0 ? 'negative' : ''}">
+        <span class="srow-label">잔액</span>
+        <span class="srow-amount">${balance < 0 ? '−' : ''}${fmtWon(Math.abs(balance))}</span>
+      </div>
     </div>
     ${total > 0 ? `
-      <div class="budget-line">예산 ${fmtWon(total)} · ${pct}% ${over ? `(₩${(used-total).toLocaleString('ko-KR')} 초과)` : ''}</div>
+      <div class="budget-line">예산 ${fmtWon(total)} · ${pct}% ${over ? `(${fmtWon(used-total)} 초과)` : ''}</div>
       <div class="progress"><div class="progress-fill" style="width:${Math.min(100,pct)}%"></div></div>
     ` : `
       <div class="budget-line">예산 미설정 (설정에서 등록)</div>
@@ -300,30 +339,42 @@ function renderBook() {
     `;
   }).join('');
 
-  // 거래 리스트 (날짜 내림차순 + 같은 날 묶음)
-  const txns = txnsOfMonth(viewMonth).slice().sort((a,b) => (b.date||'').localeCompare(a.date||'') || (b.id||'').localeCompare(a.id||''));
-  document.getElementById('txnCount').textContent = txns.length ? `${txns.length}건` : '';
+  // 거래 리스트 (지출+수입 한 목록, 날짜 내림차순 + 같은 날 묶음)
+  const entries = entriesOfMonth(viewMonth).slice().sort((a,b) => (b.date||'').localeCompare(a.date||'') || (b.id||'').localeCompare(a.id||''));
+  document.getElementById('txnCount').textContent = entries.length ? `${entries.length}건` : '';
   const listEl = document.getElementById('txnList');
-  if (!txns.length) {
+  if (!entries.length) {
     listEl.innerHTML = `<div class="empty-hint">${getEditToken() ? '아직 거래가 없습니다.<br>오른쪽 아래 + 버튼으로 추가하세요.' : '아직 거래가 없습니다.<br>편집 모드(🔒)로 들어가 추가하세요.'}</div>`;
     return;
   }
   let lastDay = '';
-  const rows = txns.map(t => {
-    const day = (t.date || '').slice(5);  // "MM-DD"
+  const rows = entries.map(e => {
+    const day = (e.date || '').slice(5);
     let dayHeader = '';
     if (day !== lastDay) {
       dayHeader = `<div class="day-header">${escapeHtml(day)}</div>`;
       lastDay = day;
     }
-    return dayHeader + `
-      <div class="txn-row" data-id="${escapeAttr(t.id)}">
-        <div class="left">
-          <div class="merchant">${escapeHtml(t.merchant || '(이름 없음)')}</div>
-          ${t.note ? `<div class="note">${escapeHtml(t.note)}</div>` : ''}
+    if (e.type === 'income') {
+      return dayHeader + `
+        <div class="txn-row income" data-id="${escapeAttr(e.id)}">
+          <div class="left">
+            <div class="merchant">${escapeHtml(e.source || '수입')}</div>
+            ${e.note ? `<div class="note">${escapeHtml(e.note)}</div>` : ''}
+          </div>
+          <span class="category income-tag">수입</span>
+          <span class="amount income-amount">+${fmtWon(e.amount)}</span>
         </div>
-        <span class="category">${escapeHtml(t.category || '기타')}</span>
-        <span class="amount">${fmtWon(t.amount)}</span>
+      `;
+    }
+    return dayHeader + `
+      <div class="txn-row expense" data-id="${escapeAttr(e.id)}">
+        <div class="left">
+          <div class="merchant">${escapeHtml(e.merchant || '(이름 없음)')}</div>
+          ${e.note ? `<div class="note">${escapeHtml(e.note)}</div>` : ''}
+        </div>
+        <span class="category">${escapeHtml(e.category || '기타')}</span>
+        <span class="amount">${fmtWon(e.amount)}</span>
       </div>
     `;
   }).join('');
@@ -337,7 +388,7 @@ function renderBook() {
 }
 
 function renderStats() {
-  const used = totalOfMonth(viewMonth);
+  const used = totalExpenseOfMonth(viewMonth);
   const bud  = budgetOf(viewMonth);
   const total = bud.total || 0;
   const income = totalIncomeOfMonth(viewMonth);
@@ -421,32 +472,7 @@ function renderSettings() {
     };
   });
 
-  // 수입 입력
-  document.getElementById('incomeMonth').value = viewMonth;
-  const incList = document.getElementById('incomeList');
-  if (!state.incomes.length) {
-    incList.innerHTML = '<div class="muted">아직 수입이 없습니다.</div>';
-  } else {
-    const sorted = state.incomes.slice().sort((a,b) => (b.date||'').localeCompare(a.date||''));
-    incList.innerHTML = sorted.map(i => `
-      <div class="income-row" data-id="${escapeAttr(i.id)}">
-        <span class="source">${escapeHtml(i.date)} · ${escapeHtml(i.source)}</span>
-        <span>
-          <span class="amount" style="margin-right:8px">${fmtWon(i.amount)}</span>
-          <button class="link-btn" data-act="del">삭제</button>
-        </span>
-      </div>
-    `).join('');
-    incList.querySelectorAll('[data-act="del"]').forEach(btn => {
-      btn.onclick = (e) => {
-        if (!ensureEditable()) return;
-        const id = e.target.closest('[data-id]').dataset.id;
-        state.incomes = state.incomes.filter(i => i.id !== id);
-        saveLocal();
-        render();
-      };
-    });
-  }
+  // (수입 입력 섹션은 메인 화면 FAB → "수입" 토글로 이동)
 
   // 카테고리 편집
   const catEdit = document.getElementById('categoryEdit');
@@ -533,7 +559,7 @@ function renderLastMonthBanner() {
   const lastMK = shiftMonth(todayMK, -1);
   const dismissed = (localStorage.getItem(LASTM_DISMISS_KEY) || '') === todayMK;
   if (dismissed) return;
-  const used = totalOfMonth(lastMK);
+  const used = totalExpenseOfMonth(lastMK);
   if (used === 0) return;  // 지난달 데이터 없으면 안 띄움
   const bud = (state.budgets[lastMK] || {}).total || 0;
   let line;
@@ -571,41 +597,58 @@ function setActiveTab(tab) {
 // ── 거래 입력/편집 모달 ─────────────────────────
 let amountStr = '0';
 let pickedCategory = null;
+let pickedType = 'expense';   // 'expense' | 'income'
+
+function applyTypeMode() {
+  // 입력 모달 form의 보임/숨김 전환 (지출 ↔ 수입)
+  const expenseRows = document.querySelectorAll('.txn-form .for-expense');
+  const incomeRows  = document.querySelectorAll('.txn-form .for-income');
+  expenseRows.forEach(el => el.classList.toggle('hidden', pickedType !== 'expense'));
+  incomeRows.forEach(el => el.classList.toggle('hidden', pickedType !== 'income'));
+  document.querySelectorAll('.type-toggle .tt-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.type === pickedType);
+  });
+}
 
 function openTxnDialog(editId) {
   if (!ensureEditable()) return;
   editTxnId = editId || null;
   amountStr = '0';
   pickedCategory = null;
+  pickedType = 'expense';
   const dlg = document.getElementById('txnDialog');
   const fMerchant = document.getElementById('fMerchant');
+  const fSource   = document.getElementById('fSource');
   const fDate     = document.getElementById('fDate');
   const fNote     = document.getElementById('fNote');
   const footer    = dlg.querySelector('.dialog-footer');
   const title     = document.getElementById('txnDialogTitle');
 
   if (editTxnId) {
-    const t = state.transactions.find(x => x.id === editTxnId);
-    if (!t) { editTxnId = null; return; }
-    title.textContent = '거래 편집';
-    amountStr = String(t.amount || 0);
-    fMerchant.value = t.merchant || '';
-    fDate.value = t.date || todayStr();
-    fNote.value = t.note || '';
-    pickedCategory = t.category || null;
+    const e = state.entries.find(x => x.id === editTxnId);
+    if (!e) { editTxnId = null; return; }
+    title.textContent = e.type === 'income' ? '수입 편집' : '지출 편집';
+    amountStr = String(e.amount || 0);
+    pickedType = e.type || 'expense';
+    fMerchant.value = e.merchant || '';
+    fSource.value   = e.source || '';
+    fDate.value = e.date || todayStr();
+    fNote.value = e.note || '';
+    pickedCategory = e.category || null;
     footer.classList.remove('hidden');
   } else {
     title.textContent = '거래 추가';
     fMerchant.value = '';
+    fSource.value   = '';
     fDate.value = todayStr();
     fNote.value = '';
     footer.classList.add('hidden');
   }
 
+  applyTypeMode();
   updateAmountDisplay();
   renderCategoryChips();
   if (!dlg.open) dlg.showModal();
-  // 모바일에서 키패드만으로 입력 가능 (가맹점 입력은 선택)
 }
 
 function closeTxnDialog() {
@@ -654,23 +697,36 @@ function renderCategoryChips() {
 function saveTxn() {
   const amount = parseInt(amountStr, 10) || 0;
   if (amount <= 0) { alert('금액을 입력하세요.'); return; }
-  const merchant = document.getElementById('fMerchant').value.trim();
   const date = document.getElementById('fDate').value || todayStr();
   const note = document.getElementById('fNote').value.trim();
-  const category = pickedCategory || '기타';
 
-  if (editTxnId) {
-    const t = state.transactions.find(x => x.id === editTxnId);
-    if (!t) return;
-    const prevCategory = t.category;
-    Object.assign(t, { date, amount, merchant, note, category });
-    // 사용자가 자동 추천과 다른 카테고리를 골랐다면 룰 학습
-    if (merchant && category !== prevCategory) learnCategory(merchant, category);
+  if (pickedType === 'income') {
+    const sourceName = document.getElementById('fSource').value.trim() || '수입';
+    if (editTxnId) {
+      const e = state.entries.find(x => x.id === editTxnId);
+      if (!e) return;
+      // type 도 바뀔 수 있음 (지출 → 수입). 필드 전체 재구성.
+      const newE = { id: e.id, type: 'income', date, amount, source: sourceName, note, ingest_source: e.ingest_source || 'manual' };
+      const idx = state.entries.indexOf(e);
+      state.entries[idx] = newE;
+    } else {
+      state.entries.push({ id: nextEntryId(), type: 'income', date, amount, source: sourceName, note, ingest_source: 'manual' });
+    }
   } else {
-    const t = { id: nextTxnId(), date, amount, merchant, note, category, source: 'manual' };
-    state.transactions.push(t);
-    // 학습: 새 입력 + 가맹점 있을 때 (자동 추천을 그대로 받은 경우도 룰을 강화)
-    if (merchant) learnCategory(merchant, category);
+    const merchant = document.getElementById('fMerchant').value.trim();
+    const category = pickedCategory || '기타';
+    if (editTxnId) {
+      const e = state.entries.find(x => x.id === editTxnId);
+      if (!e) return;
+      const prevCategory = e.category;
+      const newE = { id: e.id, type: 'expense', date, amount, merchant, category, note, source: e.source || 'manual' };
+      const idx = state.entries.indexOf(e);
+      state.entries[idx] = newE;
+      if (merchant && category !== prevCategory) learnCategory(merchant, category);
+    } else {
+      state.entries.push({ id: nextEntryId(), type: 'expense', date, amount, merchant, category, note, source: 'manual' });
+      if (merchant) learnCategory(merchant, category);
+    }
   }
   saveLocal();
   closeTxnDialog();
@@ -680,23 +736,9 @@ function saveTxn() {
 function deleteTxn() {
   if (!editTxnId) return;
   if (!confirm('이 거래를 삭제할까요?')) return;
-  state.transactions = state.transactions.filter(t => t.id !== editTxnId);
+  state.entries = state.entries.filter(e => e.id !== editTxnId);
   saveLocal();
   closeTxnDialog();
-  render();
-}
-
-// ── 수입 ────────────────────────────────────
-function addIncome() {
-  if (!ensureEditable()) return;
-  const date = (document.getElementById('incomeMonth').value || viewMonth) + '-01';
-  const source = document.getElementById('incomeSource').value.trim() || '수입';
-  const amount = parseInt(document.getElementById('incomeAmount').value, 10) || 0;
-  if (amount <= 0) { alert('금액을 입력하세요.'); return; }
-  state.incomes.push({ id: nextIncomeId(), date, source, amount });
-  document.getElementById('incomeSource').value = '';
-  document.getElementById('incomeAmount').value = '';
-  saveLocal();
   render();
 }
 
@@ -731,7 +773,9 @@ function importJsonFile(file) {
   reader.onload = (ev) => {
     try {
       const parsed = JSON.parse(ev.target.result);
-      if (!parsed || !Array.isArray(parsed.transactions)) throw new Error('형식이 올바르지 않아요');
+      if (!parsed || !(Array.isArray(parsed.entries) || Array.isArray(parsed.transactions))) {
+        throw new Error('형식이 올바르지 않아요 (entries 또는 transactions 배열 필요)');
+      }
       if (!confirm('현재 데이터를 덮어씁니다. 진행할까요?')) return;
       state = migrate(parsed);
       saveLocal();
@@ -804,8 +848,12 @@ function escapeAttr(s) { return escapeHtml(s); }
 
   // 설정
   document.getElementById('btnTokenEdit').onclick = promptEditToken;
-  document.getElementById('btnIncomeAdd').onclick = addIncome;
   document.getElementById('btnCatAdd').onclick    = addCategory;
+
+  // 입력 모달 type 토글
+  document.querySelectorAll('.type-toggle .tt-btn').forEach(b => {
+    b.onclick = () => { pickedType = b.dataset.type; applyTypeMode(); };
+  });
   document.getElementById('btnExport').onclick    = exportJson;
   document.getElementById('btnRefresh').onclick   = refreshFromServer;
   document.getElementById('fileImport').onchange  = (e) => {
@@ -831,11 +879,12 @@ function escapeAttr(s) { return escapeHtml(s); }
     if (dlg && dlg.open) return;  // 입력 중이면 패스
     const remote = await fetchFromServer();
     if (!remote) return;
-    // 변경 감지: transactions 개수 또는 마지막 id 비교 (가벼움)
-    const oldKey = state.transactions.length + '|' + (state.transactions[state.transactions.length-1]?.id || '');
-    const newKey = remote.transactions.length + '|' + (remote.transactions[remote.transactions.length-1]?.id || '');
+    // 변경 감지: entries 개수 + 마지막 id (가벼움)
+    const rm = migrate(remote);
+    const oldKey = state.entries.length + '|' + (state.entries[state.entries.length-1]?.id || '');
+    const newKey = rm.entries.length + '|' + (rm.entries[rm.entries.length-1]?.id || '');
     if (oldKey === newKey) return;
-    state = migrate(remote);
+    state = rm;
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) {}
     setSyncStatus(getEditToken() ? 'saved' : 'readonly');
     render();

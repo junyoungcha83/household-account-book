@@ -78,17 +78,6 @@
     </div>
 
     <div class="settings-group">
-      <h3>수입 입력</h3>
-      <div class="income-form">
-        <input type="month" id="incomeMonth" />
-        <input type="text" id="incomeSource" placeholder="출처 (월급 등)" />
-        <input type="number" id="incomeAmount" placeholder="금액" inputmode="numeric" />
-        <button class="btn" id="btnIncomeAdd">추가</button>
-      </div>
-      <div class="income-list" id="incomeList"></div>
-    </div>
-
-    <div class="settings-group">
       <h3>카테고리</h3>
       <div class="category-edit" id="categoryEdit"></div>
       <div class="cat-add">
@@ -143,13 +132,26 @@
       <button type="submit" class="link-btn primary" id="txnSave">저장</button>
     </header>
 
+    <!-- 지출/수입 토글 -->
+    <div class="type-toggle">
+      <button type="button" class="tt-btn active" data-type="expense">지출</button>
+      <button type="button" class="tt-btn" data-type="income">수입</button>
+    </div>
+
     <div class="amount-display" id="amountDisplay">0</div>
 
-    <div class="form-row">
+    <!-- 지출 전용: 사용처 -->
+    <div class="form-row for-expense">
       <label>사용처 <input type="text" id="fMerchant" placeholder="예) 스타벅스 강남점" autocomplete="off" /></label>
     </div>
 
-    <div class="form-row">
+    <!-- 수입 전용: 출처 -->
+    <div class="form-row for-income hidden">
+      <label>출처 <input type="text" id="fSource" placeholder="예) 월급, ㈜회사명" autocomplete="off" /></label>
+    </div>
+
+    <!-- 지출 전용: 카테고리 -->
+    <div class="form-row for-expense">
       <label>카테고리</label>
       <div class="cat-chips" id="fCategoryChips"></div>
     </div>

@@ -110,6 +110,28 @@ input { font-family: inherit; font-size: 16px; }  /* iOS 입력 줌 방지: 16px
   font-size: 1.8rem; font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
+
+/* 수입/지출/잔액 3줄 */
+.summary-rows { display: flex; flex-direction: column; gap: 4px; }
+.summary-rows .srow {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 8px;
+  padding: 2px 0;
+}
+.summary-rows .srow-label { font-size: .8rem; opacity: .85; }
+.summary-rows .srow-amount {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+.summary-rows .srow.income .srow-amount  { font-size: 1.05rem; }
+.summary-rows .srow.expense .srow-amount { font-size: 1.05rem; opacity: .92; }
+.summary-rows .srow.balance {
+  border-top: 1px solid rgba(255,255,255,.25);
+  padding-top: 8px; margin-top: 4px;
+}
+.summary-rows .srow.balance .srow-label { font-weight: 600; opacity: 1; }
+.summary-rows .srow.balance .srow-amount { font-size: 1.5rem; font-weight: 800; }
+.summary-rows .srow.balance.negative .srow-amount { color: #fecaca; }
 .summary-card .budget-line {
   font-size: .78rem; opacity: .9;
   margin-top: 6px;
@@ -224,6 +246,16 @@ input { font-family: inherit; font-size: 16px; }  /* iOS 입력 줌 방지: 16px
   text-align: right;
   flex: 0 0 auto;
   min-width: 90px;
+}
+
+/* 수입 거래 */
+.txn-row.income { background: #f0fdf4; }
+.txn-row.income:active { background: #dcfce7; }
+.txn-row .category.income-tag {
+  background: #dcfce7; color: #15803d;
+}
+.txn-row .amount.income-amount {
+  color: var(--primary-dark);
 }
 .txn-row .note {
   font-size: .72rem; color: var(--muted);
@@ -476,6 +508,30 @@ body.read-only .fab { display: none; }
   border-bottom: 1px solid var(--border);
 }
 .dialog-header h3 { margin: 0; font-size: 1rem; font-weight: 700; }
+/* 지출/수입 토글 */
+.type-toggle {
+  display: flex; gap: 4px;
+  padding: 8px 14px;
+  background: #fff;
+  border-bottom: 1px solid var(--border);
+}
+.type-toggle .tt-btn {
+  flex: 1;
+  padding: 8px 0;
+  border: 1px solid var(--border);
+  background: #f8fafc;
+  font-size: .92rem;
+  font-weight: 600;
+  color: var(--muted);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.type-toggle .tt-btn.active {
+  background: var(--primary);
+  color: #fff;
+  border-color: var(--primary);
+}
+
 .amount-display {
   font-size: 2.4rem;
   font-weight: 800;
