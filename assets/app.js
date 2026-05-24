@@ -356,10 +356,24 @@ function renderBook() {
       lastDay = day;
     }
     if (e.type === 'income') {
+      const sourceName = e.source || '수입';
+      if (isSalarySource(sourceName)) {
+        return dayHeader + `
+          <div class="txn-row income salary-row" data-id="${escapeAttr(e.id)}" data-revealed="false">
+            <div class="left">
+              <div class="merchant">${escapeHtml(sourceName)}</div>
+              ${e.note ? `<div class="note">${escapeHtml(e.note)}</div>` : ''}
+            </div>
+            <span class="category income-tag">수입</span>
+            <span class="amount income-amount blurred">+${fmtWon(e.amount)}</span>
+            <button type="button" class="btn-reveal" data-act="reveal-salary">보기</button>
+          </div>
+        `;
+      }
       return dayHeader + `
         <div class="txn-row income" data-id="${escapeAttr(e.id)}">
           <div class="left">
-            <div class="merchant">${escapeHtml(e.source || '수입')}</div>
+            <div class="merchant">${escapeHtml(sourceName)}</div>
             ${e.note ? `<div class="note">${escapeHtml(e.note)}</div>` : ''}
           </div>
           <span class="category income-tag">수입</span>
@@ -379,6 +393,7 @@ function renderBook() {
     `;
   }).join('');
   listEl.innerHTML = rows;
+  bindSalaryRevealButtons(listEl);
   listEl.querySelectorAll('.txn-row').forEach(el => {
     el.onclick = () => {
       if (!getEditToken()) return;
@@ -437,8 +452,7 @@ function renderStats() {
   } else {
     incBlock.innerHTML = incomes.map(i => {
       const sourceName = (i.source || '').trim();
-      const isSalary = sourceName === '월급';
-      if (isSalary) {
+      if (isSalarySource(sourceName)) {
         return `
           <div class="income-row salary-row" data-revealed="false">
             <span class="source">${escapeHtml(sourceName)} · ${escapeHtml(i.date)}</span>
@@ -456,25 +470,36 @@ function renderStats() {
         </div>
       `;
     }).join('');
-
-    incBlock.querySelectorAll('[data-act="reveal-salary"]').forEach(btn => {
-      btn.onclick = () => {
-        const row = btn.closest('.salary-row');
-        if (!row) return;
-        const amount = row.querySelector('.amount');
-        const revealed = row.dataset.revealed === 'true';
-        if (revealed) {
-          amount.classList.add('blurred');
-          btn.textContent = '보기';
-          row.dataset.revealed = 'false';
-        } else {
-          amount.classList.remove('blurred');
-          btn.textContent = '숨기기';
-          row.dataset.revealed = 'true';
-        }
-      };
-    });
+    bindSalaryRevealButtons(incBlock);
   }
+}
+
+// "월급" 또는 "급여" 가 들어간 source 면 민감 항목으로 취급 (대소문자/공백 무관)
+function isSalarySource(source) {
+  if (!source) return false;
+  const s = String(source).trim();
+  return s.includes('월급') || s.includes('급여');
+}
+
+function bindSalaryRevealButtons(scopeEl) {
+  scopeEl.querySelectorAll('[data-act="reveal-salary"]').forEach(btn => {
+    btn.onclick = (ev) => {
+      ev.stopPropagation();   // 부모 row 의 클릭(편집 다이얼로그) 차단
+      const row = btn.closest('.salary-row');
+      if (!row) return;
+      const amount = row.querySelector('.amount');
+      const revealed = row.dataset.revealed === 'true';
+      if (revealed) {
+        amount.classList.add('blurred');
+        btn.textContent = '보기';
+        row.dataset.revealed = 'false';
+      } else {
+        amount.classList.remove('blurred');
+        btn.textContent = '숨기기';
+        row.dataset.revealed = 'true';
+      }
+    };
+  });
 }
 
 function renderSettings() {

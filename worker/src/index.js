@@ -121,6 +121,14 @@ function parseFinanceSms(body) {
   if (!body || typeof body !== 'string') return null;
   const text = body.replace(/ /g, ' ');
 
+  // 금액 추출용 텍스트 — 누적/잔액 같은 "단건 결제 아님" 라인을 먼저 지운다.
+  // (하나카드 등이 결제 SMS 끝에 "누적금액 1,234,567원" 을 같이 보내는 패턴 방지)
+  const amountText = text
+    .replace(/(?:월|연|총|전월|당월)?\s*누적(?:금액|사용액|이용액)?\s*[:\s]*\s*[\d,]+\s*원/g, '')
+    .replace(/잔액\s*[:\s]*\s*[\d,]+\s*원/g, '')
+    .replace(/잔여한도\s*[:\s]*\s*[\d,]+\s*원/g, '')
+    .replace(/한도\s*[:\s]*\s*[\d,]+\s*원/g, '');
+
   // 1) 금액 (공통)
   let amount = 0;
   const amountPatterns = [
@@ -131,7 +139,7 @@ function parseFinanceSms(body) {
     /\b([\d,]{3,})\s*원\b/,
   ];
   for (const p of amountPatterns) {
-    const m = text.match(p);
+    const m = amountText.match(p);
     if (m) {
       const n = parseInt(m[1].replace(/,/g, ''), 10);
       if (n > 0) { amount = n; break; }
