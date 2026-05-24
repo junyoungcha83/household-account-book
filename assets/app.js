@@ -821,4 +821,23 @@ function escapeAttr(s) { return escapeHtml(s); }
       if (dlg.open) closeTxnDialog();
     }
   });
+
+  // 페이지가 다시 보일 때 서버 최신 상태 자동 fetch — 매크로/다른 기기 거래 반영.
+  // 단, 저장 펜딩 중이면 건너뜀 (사용자 입력 손실 방지).
+  document.addEventListener('visibilitychange', async () => {
+    if (document.visibilityState !== 'visible') return;
+    if (_saveTimer || _saveCtrl) return;  // 펜딩 PUT 있으면 패스
+    const dlg = document.getElementById('txnDialog');
+    if (dlg && dlg.open) return;  // 입력 중이면 패스
+    const remote = await fetchFromServer();
+    if (!remote) return;
+    // 변경 감지: transactions 개수 또는 마지막 id 비교 (가벼움)
+    const oldKey = state.transactions.length + '|' + (state.transactions[state.transactions.length-1]?.id || '');
+    const newKey = remote.transactions.length + '|' + (remote.transactions[remote.transactions.length-1]?.id || '');
+    if (oldKey === newKey) return;
+    state = migrate(remote);
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) {}
+    setSyncStatus(getEditToken() ? 'saved' : 'readonly');
+    render();
+  });
 })();
