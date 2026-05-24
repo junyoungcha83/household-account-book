@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
+<title>가계부</title>
+<link rel="stylesheet" href="assets/app.css" />
+
+<!-- PWA -->
+<link rel="manifest" href="manifest.webmanifest" />
+<meta name="theme-color" content="#16a34a" />
+<link rel="icon" type="image/svg+xml" href="assets/icon.svg" />
+
+<!-- iOS Safari 홈 화면 추가 -->
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="default" />
+<meta name="apple-mobile-web-app-title" content="가계부" />
+<link rel="apple-touch-icon" href="assets/icon.svg" />
+</head>
+<body>
+
+<!-- 상단 헤더 (월 선택 + 동기화 상태) -->
+<header class="app-header">
+  <div class="month-nav">
+    <button class="icon-btn" id="btnPrevMonth" aria-label="이전 달">‹</button>
+    <button class="month-label" id="monthLabel" aria-label="월 선택">2026년 5월</button>
+    <button class="icon-btn" id="btnNextMonth" aria-label="다음 달">›</button>
+  </div>
+  <div class="header-right">
+    <span class="sync-status" id="syncStatus"></span>
+    <button class="icon-btn" id="btnEdit" title="편집 잠금/해제" aria-label="편집">🔒</button>
+  </div>
+</header>
+
+<!-- 메인 (탭별 화면) -->
+<main class="app-main">
+  <!-- ── 탭 1: 가계부 ── -->
+  <section class="tab-panel" id="tabBook" data-tab="book">
+    <!-- 이번달 결산 카드 -->
+    <div class="summary-card" id="monthSummary"></div>
+
+    <!-- 지난달 결산 (월 바뀐 직후 며칠간만) -->
+    <div class="last-month-banner hidden" id="lastMonthBanner"></div>
+
+    <!-- 카테고리 진행 -->
+    <h2 class="section-title">카테고리</h2>
+    <div class="category-list" id="categoryList"></div>
+
+    <!-- 거래 목록 -->
+    <h2 class="section-title">
+      <span>거래 내역</span>
+      <span class="title-count" id="txnCount"></span>
+    </h2>
+    <div class="txn-list" id="txnList"></div>
+  </section>
+
+  <!-- ── 탭 2: 통계 ── -->
+  <section class="tab-panel hidden" id="tabStats" data-tab="stats">
+    <div class="stats-summary" id="statsSummary"></div>
+    <h2 class="section-title">카테고리별 사용</h2>
+    <div class="stats-bars" id="statsBars"></div>
+    <h2 class="section-title">수입</h2>
+    <div class="income-block" id="incomeBlock"></div>
+  </section>
+
+  <!-- ── 탭 3: 설정 ── -->
+  <section class="tab-panel hidden" id="tabSettings" data-tab="settings">
+
+    <div class="settings-group">
+      <h3>편집 권한</h3>
+      <p class="muted">편집 비밀번호가 있어야 거래를 추가/수정/삭제할 수 있습니다.</p>
+      <button class="btn" id="btnTokenEdit">편집 비밀번호 설정/변경</button>
+    </div>
+
+    <div class="settings-group">
+      <h3>이번달 예산</h3>
+      <div class="budget-form" id="budgetForm"></div>
+    </div>
+
+    <div class="settings-group">
+      <h3>수입 입력</h3>
+      <div class="income-form">
+        <input type="month" id="incomeMonth" />
+        <input type="text" id="incomeSource" placeholder="출처 (월급 등)" />
+        <input type="number" id="incomeAmount" placeholder="금액" inputmode="numeric" />
+        <button class="btn" id="btnIncomeAdd">추가</button>
+      </div>
+      <div class="income-list" id="incomeList"></div>
+    </div>
+
+    <div class="settings-group">
+      <h3>카테고리</h3>
+      <div class="category-edit" id="categoryEdit"></div>
+      <div class="cat-add">
+        <input type="text" id="catNewName" placeholder="새 카테고리 이름" />
+        <button class="btn" id="btnCatAdd">추가</button>
+      </div>
+    </div>
+
+    <div class="settings-group">
+      <h3>자동분류 룰 <span class="muted">(가맹점 → 카테고리)</span></h3>
+      <p class="muted">거래 입력 시 학습된 룰. 동일 가맹점은 자동 분류됩니다.</p>
+      <div class="rules-list" id="rulesList"></div>
+    </div>
+
+    <div class="settings-group">
+      <h3>데이터</h3>
+      <div class="data-buttons">
+        <button class="btn secondary" id="btnExport">JSON 내보내기</button>
+        <label class="btn secondary" style="cursor:pointer;">
+          JSON 불러오기
+          <input type="file" id="fileImport" accept="application/json" hidden />
+        </label>
+        <button class="btn secondary" id="btnRefresh">서버에서 새로고침</button>
+      </div>
+    </div>
+
+  </section>
+</main>
+
+<!-- 입력 FAB (모든 탭 위에 떠 있음) -->
+<button class="fab" id="btnAdd" aria-label="거래 추가">＋</button>
+
+<!-- 하단 탭바 -->
+<nav class="tab-bar">
+  <button class="tab-btn active" data-tab="book" aria-label="가계부">
+    <span class="tab-ico">📒</span><span class="tab-label">가계부</span>
+  </button>
+  <button class="tab-btn" data-tab="stats" aria-label="통계">
+    <span class="tab-ico">📊</span><span class="tab-label">통계</span>
+  </button>
+  <button class="tab-btn" data-tab="settings" aria-label="설정">
+    <span class="tab-ico">⚙️</span><span class="tab-label">설정</span>
+  </button>
+</nav>
+
+<!-- 입력 모달 -->
+<dialog class="txn-dialog" id="txnDialog">
+  <form method="dialog" class="txn-form" id="txnForm">
+    <header class="dialog-header">
+      <button type="button" class="link-btn" id="txnCancel">취소</button>
+      <h3 id="txnDialogTitle">거래 추가</h3>
+      <button type="submit" class="link-btn primary" id="txnSave">저장</button>
+    </header>
+
+    <div class="amount-display" id="amountDisplay">0</div>
+
+    <div class="form-row">
+      <label>사용처 <input type="text" id="fMerchant" placeholder="예) 스타벅스 강남점" autocomplete="off" /></label>
+    </div>
+
+    <div class="form-row">
+      <label>카테고리</label>
+      <div class="cat-chips" id="fCategoryChips"></div>
+    </div>
+
+    <div class="form-row two-col">
+      <label>날짜 <input type="date" id="fDate" /></label>
+      <label>메모 <input type="text" id="fNote" placeholder="(선택)" autocomplete="off" /></label>
+    </div>
+
+    <!-- 큰 숫자 키패드 -->
+    <div class="keypad">
+      <button type="button" class="key" data-k="1">1</button>
+      <button type="button" class="key" data-k="2">2</button>
+      <button type="button" class="key" data-k="3">3</button>
+      <button type="button" class="key" data-k="4">4</button>
+      <button type="button" class="key" data-k="5">5</button>
+      <button type="button" class="key" data-k="6">6</button>
+      <button type="button" class="key" data-k="7">7</button>
+      <button type="button" class="key" data-k="8">8</button>
+      <button type="button" class="key" data-k="9">9</button>
+      <button type="button" class="key key-fn" data-k="000">000</button>
+      <button type="button" class="key" data-k="0">0</button>
+      <button type="button" class="key key-fn" data-k="back">⌫</button>
+    </div>
+
+    <div class="dialog-footer">
+      <button type="button" class="btn danger ghost" id="txnDelete">삭제</button>
+    </div>
+  </form>
+</dialog>
+
+<script src="assets/app.js"></script>
+<script>
+  if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('sw.js').catch(() => {});
+    });
+  }
+</script>
+</body>
+</html>

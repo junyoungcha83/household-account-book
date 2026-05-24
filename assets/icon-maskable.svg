@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" fill="#16a34a"/>
+  <g transform="translate(51 51) scale(0.8)">
+    <rect x="96" y="160" width="320" height="240" rx="24" fill="#fff"/>
+    <rect x="96" y="160" width="320" height="56" rx="24" fill="#15803d"/>
+    <circle cx="360" cy="296" r="40" fill="#fef3c7"/>
+    <text x="360" y="312" text-anchor="middle" font-family="-apple-system, sans-serif" font-size="44" font-weight="700" fill="#b45309">₩</text>
+    <rect x="128" y="320" width="28" height="60" rx="4" fill="#16a34a"/>
+    <rect x="168" y="290" width="28" height="90" rx="4" fill="#16a34a"/>
+    <rect x="208" y="270" width="28" height="110" rx="4" fill="#16a34a"/>
+    <rect x="248" y="300" width="28" height="80" rx="4" fill="#16a34a"/>
+  </g>
+</svg>

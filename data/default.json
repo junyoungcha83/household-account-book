@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "transactions": [],
+  "incomes": [],
+  "categories": ["식비", "교통비", "학원비", "의류구매비", "기타"],
+  "budgets": {},
+  "category_rules": [
+    { "pattern": "스타벅스", "category": "식비" },
+    { "pattern": "이디야", "category": "식비" },
+    { "pattern": "올리브영", "category": "기타" },
+    { "pattern": "지하철", "category": "교통비" },
+    { "pattern": "택시", "category": "교통비" },
+    { "pattern": "버스", "category": "교통비" },
+    { "pattern": "GS25", "category": "식비" },
+    { "pattern": "CU", "category": "식비" },
+    { "pattern": "세븐일레븐", "category": "식비" },
+    { "pattern": "이마트", "category": "식비" },
+    { "pattern": "홈플러스", "category": "식비" },
+    { "pattern": "유니클로", "category": "의류구매비" },
+    { "pattern": "ZARA", "category": "의류구매비" }
+  ]
+}

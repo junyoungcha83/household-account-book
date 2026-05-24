@@ -1,0 +1,9 @@
+name = "household-account-book-api"
+main = "src/index.js"
+compatibility_date = "2024-12-01"
+
+# KV namespace 는 첫 배포 전에 `wrangler kv namespace create HOUSEHOLD` 로 만들고
+# 출력된 id 를 아래 id 값으로 채워야 합니다.
+[[kv_namespaces]]
+binding = "HOUSEHOLD"
+id = "5dba541f159c45e18e0691bbb955ca63"
