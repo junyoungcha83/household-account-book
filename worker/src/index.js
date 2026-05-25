@@ -121,28 +121,52 @@ function parseFinanceSms(body) {
   if (!body || typeof body !== 'string') return null;
   const text = body.replace(/ /g, ' ');
 
-  // 금액 추출용 텍스트 — 누적/잔액 같은 "단건 결제 아님" 라인을 먼저 지운다.
-  // (하나카드 등이 결제 SMS 끝에 "누적금액 1,234,567원" 을 같이 보내는 패턴 방지)
+  // 금액 추출용 텍스트 — 단건 결제가 아닌 누적·할인·예정·실적 등 부가 금액 라인 제거.
+  // 표 형식 SMS(하나카드 등)의 들쭉날쭉한 공백(스페이스·탭·NBSP)을 \s 가 모두 흡수하도록.
   const amountText = text
-    .replace(/(?:월|연|총|전월|당월)?\s*누적(?:금액|사용액|이용액)?\s*[:\s]*\s*[\d,]+\s*원/g, '')
-    .replace(/잔액\s*[:\s]*\s*[\d,]+\s*원/g, '')
-    .replace(/잔여한도\s*[:\s]*\s*[\d,]+\s*원/g, '')
-    .replace(/한도\s*[:\s]*\s*[\d,]+\s*원/g, '');
+    // 누적금액 / 누적사용액 / 월누적 / 전월누적 / 당월누적 / 연누적 등
+    .replace(/(?:월|연|총|전월|당월|일)?\s*누적(?:금액|사용액|이용액|결제액)?\s*[:\s]*[\d,]+\s*원/g, '')
+    // 실적금액 / 전월실적 / 당월실적
+    .replace(/(?:전월|당월|이번달|지난달)?\s*실적(?:금액)?\s*[:\s]*[\d,]+\s*원/g, '')
+    // 할인예정 / 할인금액 / 적립예정 / 적립금
+    .replace(/할인\s*(?:예정|금액)?\s*[:\s]*[\d,]+\s*원/g, '')
+    .replace(/적립\s*(?:예정|금액|포인트)?\s*[:\s]*[\d,]+\s*원/g, '')
+    // 청구예정 / 청구금액 / 결제예정 / 결제금액 (단건 '결제' 가 아니라 라벨)
+    .replace(/(?:청구|결제)\s*(?:예정|금액)\s*[:\s]*[\d,]+\s*원/g, '')
+    // 한도 / 잔여한도 / 잔액
+    .replace(/(?:잔여\s*)?한도\s*[:\s]*[\d,]+\s*원/g, '')
+    .replace(/잔액\s*[:\s]*[\d,]+\s*원/g, '');
 
-  // 1) 금액 (공통)
+  // 1) 금액 추출
   let amount = 0;
-  const amountPatterns = [
-    /금액\s*[:\s\n]*\s*([\d,]+)\s*원/,
-    /입금\s*[:\s\n]*\s*([\d,]+)\s*원/,
-    /(?:입금|받음|수령|승인)[\s\S]{0,40}?([\d,]+)\s*원/,
-    /([\d,]+)\s*원\s*(?:일시불|할부|입금|이체)/,
-    /\b([\d,]{3,})\s*원\b/,
-  ];
-  for (const p of amountPatterns) {
-    const m = amountText.match(p);
-    if (m) {
-      const n = parseInt(m[1].replace(/,/g, ''), 10);
-      if (n > 0) { amount = n; break; }
+  // 우선순위 1 — '금액' 라벨이 단독으로 라인을 시작 (표 형식: 금액 60,500원).
+  // 음수 lookbehind 로 누적금액·청구금액·할인금액·실적금액 등 합성 라벨 차단.
+  const labelOnly = amountText.match(/(?:^|[\n\r])\s*금액\s*[:\s]+([\d,]+)\s*원/);
+  if (labelOnly) {
+    const n = parseInt(labelOnly[1].replace(/,/g, ''), 10);
+    if (n > 0) amount = n;
+  }
+  // 우선순위 2 — 입금 라벨 (은행 입금 SMS)
+  if (!amount) {
+    const incomeLabel = amountText.match(/(?:^|[\n\r])\s*입금(?:액)?\s*[:\s]+([\d,]+)\s*원/);
+    if (incomeLabel) {
+      const n = parseInt(incomeLabel[1].replace(/,/g, ''), 10);
+      if (n > 0) amount = n;
+    }
+  }
+  // 우선순위 3~ — 라벨 형식 아닌 SMS (예: '60,500원 일시불') 폴백
+  if (!amount) {
+    const fallbacks = [
+      /(?:입금|받음|수령|승인)[\s\S]{0,40}?([\d,]+)\s*원/,
+      /([\d,]+)\s*원\s*(?:일시불|할부|입금|이체)/,
+      /\b([\d,]{3,})\s*원\b/,
+    ];
+    for (const p of fallbacks) {
+      const m = amountText.match(p);
+      if (m) {
+        const n = parseInt(m[1].replace(/,/g, ''), 10);
+        if (n > 0) { amount = n; break; }
+      }
     }
   }
   if (!amount) return null;
@@ -349,7 +373,10 @@ export default {
       const smsText = String(body.body || body.text || '').trim();
       if (!smsText) return json({ error: 'empty_body' }, 400, cors);
 
+      // 진단 로그 — wrangler tail 로 확인 가능. 금액 파싱 이슈 디버깅 용.
+      console.log('[sms-ingest] received', JSON.stringify({ len: smsText.length, preview: smsText.slice(0, 400) }));
       const parsed = parseFinanceSms(smsText);
+      console.log('[sms-ingest] parsed', JSON.stringify(parsed));
       if (!parsed) {
         return json({
           error: 'parse_failed',
