@@ -171,9 +171,10 @@ function parseFinanceSms(body) {
   }
   if (!amount) return null;
 
-  // 2) 날짜 (공통, MM/DD HH:MM 또는 MM-DD)
+  // 2) 날짜 + 시간 (공통, MM/DD HH:MM 또는 MM-DD)
   const today = new Date();
   let date = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
+  let time = '';
   const dm = text.match(/(\d{1,2})[\/.\-](\d{1,2})(?:\s+(\d{1,2}):(\d{1,2}))?/);
   if (dm) {
     const mm = parseInt(dm[1], 10);
@@ -184,6 +185,20 @@ function parseFinanceSms(body) {
       else if (today.getMonth() === 11 && mm === 1) y += 1;
       date = `${y}-${String(mm).padStart(2,'0')}-${String(dd).padStart(2,'0')}`;
     }
+    if (dm[3] && dm[4]) {
+      const hh = parseInt(dm[3], 10);
+      const mi = parseInt(dm[4], 10);
+      if (hh >= 0 && hh < 24 && mi >= 0 && mi < 60) {
+        time = `${String(hh).padStart(2,'0')}:${String(mi).padStart(2,'0')}`;
+      }
+    }
+  }
+
+  // 카드명 — 카드사가 SMS 에 표기한 라벨 (예: "카드 하나2*4*") 그대로 추출
+  let card = '';
+  const cardMatch = text.match(/(?:^|[\n\r])\s*카드\s*[:\s]+([^\n\r]+)/);
+  if (cardMatch) {
+    card = cardMatch[1].trim().replace(/\s{2,}/g, ' ').slice(0, 30);
   }
 
   // 3) type 판정 (income 시그널 우선)
@@ -210,7 +225,7 @@ function parseFinanceSms(body) {
       }
     }
     if (!source) source = '수입';
-    return { type: 'income', amount, source, date };
+    return { type: 'income', amount, source, date, time, card };
   }
 
   // 4) expense — 가맹점 추출
@@ -228,7 +243,7 @@ function parseFinanceSms(body) {
       if (merchant) break;
     }
   }
-  return { type: 'expense', amount, merchant, date };
+  return { type: 'expense', amount, merchant, date, time, card };
 }
 
 // 하위 호환: 기존 호출 (지금은 sms-ingest 만 사용하지만 안전)
@@ -335,20 +350,31 @@ export default {
         : new Date().toISOString().slice(0, 10);
       const note = String(body.note || '').trim().slice(0, 200);
       const ingest_source = String(body.source || 'card-sms').slice(0, 32);
+      // 매크로가 직접 보내는 time / card 도 받음 (구조화 호출 — sms-ingest 가 아닐 때).
+      const time = /^\d{1,2}:\d{2}$/.test(String(body.time || '')) ? String(body.time).padStart(5, '0') : '';
+      const card = String(body.card || '').trim().slice(0, 30);
 
       const stateObj = await readStateV2(env);
 
       let entry;
       if (type === 'income') {
         const src = String(body.income_source || body.merchant || '수입').trim().slice(0, 60);
-        entry = { id: genId(), type: 'income', date, amount, source: src, note, ingest_source };
+        entry = {
+          id: genId(), type: 'income', date, amount, source: src, note, ingest_source,
+          ...(time && { time }),
+          ...(card && { card }),
+        };
       } else {
         const merchant = String(body.merchant || '').trim().slice(0, 80);
         const requestedCat = String(body.category || '').trim();
         const category = (requestedCat && stateObj.categories.includes(requestedCat))
           ? requestedCat
           : classifyCategory(merchant, stateObj.category_rules, stateObj.categories);
-        entry = { id: genId(), type: 'expense', date, amount, merchant, category, note, source: ingest_source };
+        entry = {
+          id: genId(), type: 'expense', date, amount, merchant, category, note, source: ingest_source,
+          ...(time && { time }),
+          ...(card && { card }),
+        };
       }
       stateObj.entries.push(entry);
 
@@ -390,17 +416,23 @@ export default {
 
       const stateObj = await readStateV2(env);
 
+      const time = parsed.time || '';
+      const card = parsed.card || '';
       let entry;
       if (parsed.type === 'income') {
         entry = {
           id: genId(), type: 'income', date: parsed.date, amount: parsed.amount,
           source: parsed.source || '수입', note, ingest_source,
+          ...(time && { time }),
+          ...(card && { card }),
         };
       } else {
         const category = classifyCategory(parsed.merchant, stateObj.category_rules, stateObj.categories);
         entry = {
           id: genId(), type: 'expense', date: parsed.date, amount: parsed.amount,
           merchant: parsed.merchant || '(가맹점 미상)', category, note, source: ingest_source,
+          ...(time && { time }),
+          ...(card && { card }),
         };
       }
       stateObj.entries.push(entry);

@@ -355,6 +355,10 @@ function renderBook() {
       dayHeader = `<div class="day-header">${escapeHtml(day)}</div>`;
       lastDay = day;
     }
+    const metaParts = [e.time, e.card].filter(Boolean);
+    const metaHtml = metaParts.length
+      ? `<div class="meta">${escapeHtml(metaParts.join(' · '))}</div>`
+      : '';
     if (e.type === 'income') {
       const sourceName = e.source || '수입';
       if (isSalarySource(sourceName)) {
@@ -362,6 +366,7 @@ function renderBook() {
           <div class="txn-row income salary-row" data-id="${escapeAttr(e.id)}" data-revealed="false">
             <div class="left">
               <div class="merchant">${escapeHtml(sourceName)}</div>
+              ${metaHtml}
               ${e.note ? `<div class="note">${escapeHtml(e.note)}</div>` : ''}
             </div>
             <span class="category income-tag">수입</span>
@@ -374,6 +379,7 @@ function renderBook() {
         <div class="txn-row income" data-id="${escapeAttr(e.id)}">
           <div class="left">
             <div class="merchant">${escapeHtml(sourceName)}</div>
+            ${metaHtml}
             ${e.note ? `<div class="note">${escapeHtml(e.note)}</div>` : ''}
           </div>
           <span class="category income-tag">수입</span>
@@ -385,6 +391,7 @@ function renderBook() {
       <div class="txn-row expense" data-id="${escapeAttr(e.id)}">
         <div class="left">
           <div class="merchant">${escapeHtml(e.merchant || '(이름 없음)')}</div>
+          ${metaHtml}
           ${e.note ? `<div class="note">${escapeHtml(e.note)}</div>` : ''}
         </div>
         <span class="category">${escapeHtml(e.category || '기타')}</span>

@@ -211,16 +211,17 @@ input { font-family: inherit; font-size: 16px; }  /* iOS 입력 줌 방지: 16px
   overflow: hidden;
 }
 .day-header {
-  padding: 8px 14px;
+  padding: 6px 12px;
   background: #f8fafc;
-  font-size: .75rem; color: var(--muted); font-weight: 600;
+  font-size: .65rem; color: var(--muted); font-weight: 600;
   border-bottom: 1px solid var(--border);
 }
+/* 거래내역 — 폰트를 2단계 작게 (사용자 요청). 사이즈 값 모두 동일 비율로 축소. */
 .txn-row {
   display: flex; align-items: center;
-  padding: 12px 14px;
+  padding: 9px 12px;             /* padding 도 조금 축소 — 시각적 균형 */
   border-bottom: 1px solid var(--border);
-  gap: 10px;
+  gap: 8px;
   cursor: pointer;
   background: #fff;
   transition: background .1s;
@@ -228,12 +229,12 @@ input { font-family: inherit; font-size: 16px; }  /* iOS 입력 줌 방지: 16px
 .txn-row:last-child { border-bottom: none; }
 .txn-row:active { background: #f1f5f9; }
 .txn-row .merchant {
-  flex: 1; font-weight: 600; font-size: .95rem;
+  flex: 1; font-weight: 600; font-size: .8rem;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .txn-row .category {
-  font-size: .72rem;
-  padding: 2px 8px;
+  font-size: .62rem;
+  padding: 2px 7px;
   border-radius: 99px;
   background: var(--primary-bg); color: var(--primary-dark);
   font-weight: 500;
@@ -242,10 +243,10 @@ input { font-family: inherit; font-size: 16px; }  /* iOS 입력 줌 방지: 16px
 .txn-row .amount {
   font-variant-numeric: tabular-nums;
   font-weight: 700;
-  font-size: 1rem;
+  font-size: .85rem;
   text-align: right;
   flex: 0 0 auto;
-  min-width: 90px;
+  min-width: 80px;
 }
 
 /* 수입 거래 */
@@ -257,9 +258,15 @@ input { font-family: inherit; font-size: 16px; }  /* iOS 입력 줌 방지: 16px
 .txn-row .amount.income-amount {
   color: var(--primary-dark);
 }
-.txn-row .note {
-  font-size: .72rem; color: var(--muted);
+.txn-row .meta {
+  font-size: .62rem; color: var(--muted);
   margin-top: 2px;
+  font-variant-numeric: tabular-nums;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.txn-row .note {
+  font-size: .62rem; color: var(--muted);
+  margin-top: 1px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .txn-row .left { flex: 1; min-width: 0; }
