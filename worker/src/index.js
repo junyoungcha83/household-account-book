@@ -401,6 +401,29 @@ export default {
 
       // 진단 로그 — wrangler tail 로 확인 가능. 금액 파싱 이슈 디버깅 용.
       console.log('[sms-ingest] received', JSON.stringify({ len: smsText.length, preview: smsText.slice(0, 400) }));
+
+      // 매크로의 변수 치환 실패 케이스 — Macrodroid 가 {notification}, {sms_body} 같은
+      // placeholder 를 그대로 보내는 경우. parse 시도 전에 명확한 hint 반환해 사용자가
+      // 즉시 매크로 설정 문제를 알 수 있도록.
+      if (/^\{[a-z_][a-z_0-9]*\}$/i.test(smsText)) {
+        console.warn('[sms-ingest] unsubstituted placeholder', smsText);
+        return json({
+          error: 'unsubstituted_placeholder',
+          hint: `매크로의 HTTP body 가 변수 치환이 안 된 상태로 도착 ('${smsText}'). ` +
+                'Macrodroid 에서 매직 텍스트로 "알림 텍스트" 또는 "SMS 본문" 변수를 다시 삽입하세요.',
+          received: smsText,
+        }, 422, cors);
+      }
+      // SMS·알림 본문은 보통 50자 이상. 너무 짧으면 변수 미치환 또는 잘림 의심.
+      if (smsText.length < 30) {
+        console.warn('[sms-ingest] suspicious short body', smsText);
+        return json({
+          error: 'body_too_short',
+          hint: `본문이 너무 짧음 (${smsText.length}자). 매크로 변수 치환 또는 발송 설정을 확인하세요.`,
+          received: smsText,
+        }, 422, cors);
+      }
+
       const parsed = parseFinanceSms(smsText);
       console.log('[sms-ingest] parsed', JSON.stringify(parsed));
       if (!parsed) {
