@@ -377,6 +377,8 @@ export default {
         };
       }
       stateObj.entries.push(entry);
+      // 자동 ingest heartbeat — 매크로가 살아있는지 프론트에서 가시화하기 위한 신호
+      stateObj.last_ingest_at = new Date().toISOString();
 
       const newRaw = JSON.stringify(stateObj);
       if (newRaw.length > MAX_BYTES) {
@@ -459,6 +461,8 @@ export default {
         };
       }
       stateObj.entries.push(entry);
+      // 자동 ingest heartbeat — 매크로가 살아있는지 프론트에서 가시화하기 위한 신호
+      stateObj.last_ingest_at = new Date().toISOString();
 
       const newRaw = JSON.stringify(stateObj);
       if (newRaw.length > MAX_BYTES) {

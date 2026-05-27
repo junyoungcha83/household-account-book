@@ -71,6 +71,16 @@ input { font-family: inherit; font-size: 16px; }  /* iOS 입력 줌 방지: 16px
 .sync-status.error    { color: var(--danger); }
 .sync-status.readonly { color: var(--muted); }
 
+/* 마지막 자동(SMS) 등록 시각 — 매크로 정상 동작 가시화 */
+.last-ingest {
+  font-size: .68rem;
+  color: var(--muted);
+  white-space: nowrap;
+  margin-right: 4px;
+}
+.last-ingest.warn  { color: #b45309; font-weight: 600; }
+.last-ingest.alarm { color: var(--danger); font-weight: 600; }
+
 /* ── 본문 (탭 패널 컨테이너) ── */
 .app-main {
   padding: 12px 14px calc(var(--tab-h) + var(--safe-bottom) + 80px);

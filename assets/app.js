@@ -76,6 +76,9 @@ function migrate(loaded) {
       categories: Array.isArray(loaded.categories) && loaded.categories.length ? loaded.categories : DEFAULT_STATE.categories.slice(),
       budgets: (loaded.budgets && typeof loaded.budgets === 'object') ? loaded.budgets : {},
       category_rules: Array.isArray(loaded.category_rules) ? loaded.category_rules : [],
+      // 서버에서 받은 자동 ingest heartbeat — manual 편집 → PUT 시 그대로 다시 보내
+      // 서버 값이 사라지지 않게 round-trip.
+      last_ingest_at: typeof loaded.last_ingest_at === 'string' ? loaded.last_ingest_at : undefined,
     };
   }
   // v1 → v2
@@ -277,6 +280,40 @@ function render() {
   if (activeTab === 'stats')    renderStats();
   if (activeTab === 'settings') renderSettings();
   renderLastMonthBanner();
+  updateLastIngestUI();
+}
+
+// 마지막 자동(SMS) ingest 시각을 헤더에 표시. 24h 넘으면 노랑, 7일 넘으면 빨강.
+// 매크로가 죽어있으면 이 라벨이 며칠 전으로 굳어져 즉시 시각화됨.
+function updateLastIngestUI() {
+  const el = document.getElementById('lastIngest');
+  if (!el) return;
+  const iso = state && state.last_ingest_at;
+  el.classList.remove('warn', 'alarm');
+  if (!iso) {
+    el.textContent = '🤖 자동 등록 기록 없음';
+    el.classList.add('alarm');
+    return;
+  }
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) {
+    el.textContent = '🤖 자동 등록 기록 없음';
+    el.classList.add('alarm');
+    return;
+  }
+  const diffMin = Math.max(0, Math.floor((Date.now() - t) / 60000));
+  let text;
+  if (diffMin < 1)        text = '🤖 방금 자동';
+  else if (diffMin < 60)  text = `🤖 ${diffMin}분 전 자동`;
+  else if (diffMin < 60 * 24) {
+    const h = Math.floor(diffMin / 60);
+    text = `🤖 ${h}시간 전 자동`;
+  } else {
+    const d = Math.floor(diffMin / (60 * 24));
+    text = `🤖 ${d}일 전 자동`;
+    el.classList.add(d >= 7 ? 'alarm' : 'warn');
+  }
+  el.textContent = text;
 }
 
 function renderBook() {
@@ -934,6 +971,9 @@ function escapeAttr(s) { return escapeHtml(s); }
       if (dlg.open) closeTxnDialog();
     }
   });
+
+  // 1분마다 "마지막 자동 N분 전" 라벨 갱신 — render 없이도 텍스트만 업데이트.
+  setInterval(updateLastIngestUI, 60 * 1000);
 
   // 페이지가 다시 보일 때 서버 최신 상태 자동 fetch — 매크로/다른 기기 거래 반영.
   // 단, 저장 펜딩 중이면 건너뜀 (사용자 입력 손실 방지).
