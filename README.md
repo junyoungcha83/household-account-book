@@ -88,16 +88,20 @@ cd worker && echo "새토큰" | npx wrangler secret put EDIT_TOKEN
 
 #### Trigger (트리거) — 2가지 옵션
 
-**옵션 A. SMS 수신 (일반 SMS 받는 경우)**
+> **⚠️ 중요: 옵션 B(알림 수신)를 권장.** 요즘 카드사 문자는 "문자처럼 보여도" 실제로는 **RCS**로
+> 오는 경우가 많은데, 옵션 A의 *SMS Received* 트리거는 **RCS를 못 잡습니다**(매크로가 아예 발동 안 함
+> → 가계부에 아무 반응 없음). 알림 수신 트리거는 SMS·RCS·카드앱 푸시를 모두 포착하므로 안전합니다.
+
+**옵션 B. 알림 수신 (권장 — RCS·SMS·카드앱 푸시 모두 포착)**
+- "Triggers" → "Device Events" → "Notification" → "Notification Received"
+- "Application" → Google Messages (메시지 앱). 카드사 앱 푸시로 받으면 그 카드앱도 선택.
+- "Text content contains" → `원` 또는 `승인`
+- (Android 알림 접근 권한 필요 — 매크로 저장 시 안내)
+
+**옵션 A. SMS 수신 (확실히 일반 SMS로만 받는 경우)**
 - "Triggers" → "Messaging" → "SMS Received"
 - "Sender" 비워두면 모든 발신자, 카드사 번호 (예: 하나카드 `1800-1111`) 만 좁히려면 입력
 - 또는 "Message Content contains" → `원` 또는 `승인`
-
-**옵션 B. 알림 수신 (RCS / 카드앱 푸시 받는 경우 — 권장)**
-- "Triggers" → "Device Events" → "Notification" → "Notification Received"
-- "Application" → Google Messages (또는 카드앱)
-- "Text content contains" → `원` 또는 `승인`
-- (Android 알림 접근 권한 필요 — 매크로 저장 시 안내)
 
 #### Action (동작) — HTTP 요청
 
@@ -119,13 +123,24 @@ cd worker && echo "새토큰" | npx wrangler secret put EDIT_TOKEN
 ### 동작 확인
 
 1. 매크로 저장 → 카드로 작은 결제 1건 (편의점·자판기 등)
-2. SMS 도착 → 매크로 자동 실행 → MacroDroid "Action log" 에서 200 OK 확인
+2. SMS/알림 도착 → 매크로 자동 실행
 3. 가계부 앱 열면 (또는 이미 켜져있으면 잠시 다른 앱 갔다 돌아오면) 새 거래 자동 표시
 4. 카테고리는 서버 default 룰 (스타벅스·CU·메가커피·지하철·이마트·유니클로 등 18개) 또는 학습된 사용자 룰로 자동 분류. 분류 결과 마음에 안 들면 거래 클릭해서 카테고리 바꾸면 다음부터 학습됨.
 
-### 파싱 실패 시
+### 자동 수신 점검 (앱 안에서 — "아무 반응 없음" 진단)
 
-서버가 `parse_failed` 응답 (HTTP 422) — MacroDroid Action log 에서 확인 가능. 그 SMS 본문을 알려주시면 서버 정규식 보강 (`parseCardSms` in `worker/src/index.js`).
+앱 **설정 탭 → "자동 수신 점검"** 패널에 매크로가 서버로 보낸 **최근 20건의 결과**가 성공/실패별로 표시됩니다
+(서버가 `ingest_log` 에 적재 → 앱이 표시). MacroDroid Action log 를 안 봐도 어디서 끊겼는지 바로 보입니다.
+
+- **목록이 비어있음("도착한 요청이 0건")** → 매크로가 서버로 **아예 안 쏘는 중**. 보통 RCS 함정(옵션 A 사용)
+  이거나 권한/배터리 최적화 문제. 위 옵션 B로 바꾸고 권한·배터리 최적화 제외 확인.
+- **⚠️ 변수 미치환 / body 비어있음** → HTTP Body 의 본문 변수를 매직텍스트로 다시 삽입.
+- **⚠️ JSON 오류** → Content-Type `application/json` 헤더 누락 또는 본문 형식 오류.
+- **⚠️ 파싱 실패** → 본문은 도착했으나 금액 패턴 못 찾음. 그 미리보기(본문)를 알려주시면 파서 보강
+  (`parseFinanceSms` in `worker/src/index.js`).
+- **✅ 성공** → 정상 적재. 거래가 안 보이면 앱을 새로고침(또는 다른 앱 갔다 복귀).
+
+MacroDroid **"Test Actions"** 로 단독 실행한 뒤 이 패널을 새로고침하면 실제 결제 없이도 결과를 볼 수 있습니다.
 
 지원 패턴 (현재):
 - 금액: `금액 X원` (RCS 카드 UI) · `X원 일시불/할부` (일반 SMS) · `승인 ... X원` · 첫 N자리 금액

@@ -79,6 +79,8 @@ function migrate(loaded) {
       // 서버에서 받은 자동 ingest heartbeat — manual 편집 → PUT 시 그대로 다시 보내
       // 서버 값이 사라지지 않게 round-trip.
       last_ingest_at: typeof loaded.last_ingest_at === 'string' ? loaded.last_ingest_at : undefined,
+      // 자동수신 점검 로그도 round-trip 보존 (앱 PUT 가 KV 로그를 덮어쓰지 않게).
+      ingest_log: Array.isArray(loaded.ingest_log) ? loaded.ingest_log : undefined,
     };
   }
   // v1 → v2
@@ -647,6 +649,72 @@ function renderSettings() {
       };
     });
   }
+
+  // 자동 수신(카드 SMS) 점검 로그
+  renderIngestDiag();
+}
+
+// 자동수신 ingest 결과별 사람이 읽는 라벨/힌트.
+const INGEST_RESULTS = {
+  ok:                       { badge: '✅', label: '성공', hint: '' },
+  parse_failed:             { badge: '⚠️', label: '파싱 실패', hint: '금액(원) 패턴을 못 찾음. 이 본문을 알려주면 파서 보강.' },
+  unsubstituted_placeholder:{ badge: '⚠️', label: '변수 미치환', hint: '매크로 본문이 {sms_body} 처럼 그대로 도착. 매직텍스트를 다시 삽입하세요.' },
+  body_too_short:           { badge: '⚠️', label: '본문 너무 짧음', hint: '변수 미치환 또는 본문 잘림 의심.' },
+  empty_body:               { badge: '⚠️', label: 'body 비어있음', hint: '매크로 HTTP body 의 본문 변수를 확인하세요.' },
+  invalid_json:             { badge: '⚠️', label: 'JSON 오류', hint: 'Content-Type: application/json 헤더와 본문 JSON 형식을 확인하세요.' },
+};
+
+function fmtAgo(iso) {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return '';
+  const min = Math.max(0, Math.floor((Date.now() - t) / 60000));
+  if (min < 1)        return '방금';
+  if (min < 60)       return `${min}분 전`;
+  if (min < 60 * 24)  return `${Math.floor(min / 60)}시간 전`;
+  return `${Math.floor(min / (60 * 24))}일 전`;
+}
+
+function renderIngestDiag() {
+  const box = document.getElementById('ingestDiag');
+  if (!box) return;
+  const log = Array.isArray(state.ingest_log) ? state.ingest_log : [];
+
+  // 한 건도 도착한 적 없음 — 폰 매크로가 서버로 안 쏘는 상태.
+  if (!log.length && !state.last_ingest_at) {
+    box.innerHTML = `
+      <div class="diag-empty alarm">
+        <strong>📭 매크로에서 도착한 요청이 한 건도 없습니다.</strong>
+        <p>폰의 카드 SMS 매크로(MacroDroid)가 서버로 전송하지 못하고 있다는 뜻입니다.
+        서버·앱은 정상이므로, 아래를 순서대로 점검하세요:</p>
+        <ol>
+          <li>매크로 <b>트리거를 "알림 수신"</b>으로(메시지 앱 알림). RCS 문자는 'SMS 수신' 트리거로 안 잡힙니다.</li>
+          <li>HTTP <b>Body 변수를 매직텍스트로 재삽입</b> (직접 타이핑 금지).</li>
+          <li>URL <code>/api/sms-ingest</code> · Method POST · Header <code>X-Ingest-Token</code> · Content-Type <code>application/json</code>.</li>
+          <li>MacroDroid <b>배터리 최적화 제외</b> + 알림 접근 권한 ON + 매크로 Enabled.</li>
+          <li>MacroDroid <b>"Test Actions"</b> 로 1회 실행 → 이 화면을 새로고침해 결과 확인.</li>
+        </ol>
+      </div>`;
+    return;
+  }
+
+  const rows = log.slice().reverse().map(e => {
+    const meta = INGEST_RESULTS[e.result] || { badge: 'ℹ️', label: e.result || '?', hint: '' };
+    const cls = e.result === 'ok' ? 'ok' : 'fail';
+    return `
+      <div class="diag-row ${cls}">
+        <div class="diag-line1">
+          <span class="diag-badge">${meta.badge}</span>
+          <span class="diag-label">${escapeHtml(meta.label)}</span>
+          <span class="diag-time">${escapeHtml(fmtAgo(e.at))}</span>
+          ${e.source ? `<span class="diag-src">${escapeHtml(e.source)}</span>` : ''}
+        </div>
+        ${e.detail ? `<div class="diag-detail">${escapeHtml(e.detail)}</div>` : ''}
+        ${meta.hint ? `<div class="diag-hint">${escapeHtml(meta.hint)}</div>` : ''}
+        ${e.preview ? `<div class="diag-preview">${escapeHtml(e.preview)}</div>` : ''}
+      </div>`;
+  }).join('');
+
+  box.innerHTML = `<div class="diag-list">${rows}</div>`;
 }
 
 function renderLastMonthBanner() {

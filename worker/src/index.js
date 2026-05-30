@@ -75,6 +75,24 @@ function genId() {
   return 'e_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 }
 
+// 자동수신(ingest) 점검 로그 — 성공/실패 모두 KV 문서 안 링버퍼에 적재.
+// 매크로→서버 경로가 어디서 끊기는지 앱 설정 탭에서 바로 보이게 하는 용도.
+// 최근 INGEST_LOG_MAX 건만 유지. preview 는 80자로 잘라 노출면 최소화.
+const INGEST_LOG_MAX = 20;
+function recordIngest(stateObj, { result, source, detail, preview }) {
+  if (!Array.isArray(stateObj.ingest_log)) stateObj.ingest_log = [];
+  stateObj.ingest_log.push({
+    at: new Date().toISOString(),
+    source: String(source || '').slice(0, 32),
+    result: String(result || '').slice(0, 32),
+    ...(detail ? { detail: String(detail).slice(0, 120) } : {}),
+    ...(preview ? { preview: String(preview).slice(0, 80) } : {}),
+  });
+  if (stateObj.ingest_log.length > INGEST_LOG_MAX) {
+    stateObj.ingest_log = stateObj.ingest_log.slice(-INGEST_LOG_MAX);
+  }
+}
+
 // v1 (transactions + incomes) → v2 (entries + type) 자동 마이그레이션. idempotent.
 function migrateToV2(loaded) {
   if (!loaded || typeof loaded !== 'object') return null;
@@ -379,6 +397,10 @@ export default {
       stateObj.entries.push(entry);
       // 자동 ingest heartbeat — 매크로가 살아있는지 프론트에서 가시화하기 위한 신호
       stateObj.last_ingest_at = new Date().toISOString();
+      recordIngest(stateObj, {
+        result: 'ok', source: ingest_source,
+        detail: `${type === 'income' ? '수입' : '지출'} ${amount.toLocaleString()}원 (구조화 전송)`,
+      });
 
       const newRaw = JSON.stringify(stateObj);
       if (newRaw.length > MAX_BYTES) {
@@ -394,12 +416,31 @@ export default {
       if (!env.INGEST_TOKEN || token !== env.INGEST_TOKEN) {
         return json({ error: 'unauthorized' }, 401, cors);
       }
+
+      // 인증 통과 후엔 성공·실패 모두 KV 점검 로그(ingest_log)에 적재한다.
+      // 매크로→서버 경로가 어디서 끊기는지 앱 설정 탭에서 바로 보이게 하기 위함.
+      const stateObj = await readStateV2(env);
+      const finish = async (logArgs, respBody, status) => {
+        recordIngest(stateObj, logArgs);
+        try { await env.HOUSEHOLD.put(KEY, JSON.stringify(stateObj)); } catch {}
+        return json(respBody, status, cors);
+      };
+
       let body;
       try { body = await req.json(); }
-      catch { return json({ error: 'invalid_json' }, 400, cors); }
+      catch {
+        return finish(
+          { result: 'invalid_json', source: '', detail: 'JSON 파싱 실패 (Content-Type/본문 확인)' },
+          { error: 'invalid_json' }, 400);
+      }
 
+      const ingest_source = String(body.source || 'card-sms').slice(0, 32);
       const smsText = String(body.body || body.text || '').trim();
-      if (!smsText) return json({ error: 'empty_body' }, 400, cors);
+      if (!smsText) {
+        return finish(
+          { result: 'empty_body', source: ingest_source, detail: 'body 가 비어있음' },
+          { error: 'empty_body' }, 400);
+      }
 
       // 진단 로그 — wrangler tail 로 확인 가능. 금액 파싱 이슈 디버깅 용.
       console.log('[sms-ingest] received', JSON.stringify({ len: smsText.length, preview: smsText.slice(0, 400) }));
@@ -409,37 +450,40 @@ export default {
       // 즉시 매크로 설정 문제를 알 수 있도록.
       if (/^\{[a-z_][a-z_0-9]*\}$/i.test(smsText)) {
         console.warn('[sms-ingest] unsubstituted placeholder', smsText);
-        return json({
-          error: 'unsubstituted_placeholder',
-          hint: `매크로의 HTTP body 가 변수 치환이 안 된 상태로 도착 ('${smsText}'). ` +
-                'Macrodroid 에서 매직 텍스트로 "알림 텍스트" 또는 "SMS 본문" 변수를 다시 삽입하세요.',
-          received: smsText,
-        }, 422, cors);
+        return finish(
+          { result: 'unsubstituted_placeholder', source: ingest_source, detail: '매크로 변수 미치환', preview: smsText },
+          {
+            error: 'unsubstituted_placeholder',
+            hint: `매크로의 HTTP body 가 변수 치환이 안 된 상태로 도착 ('${smsText}'). ` +
+                  'Macrodroid 에서 매직 텍스트로 "알림 텍스트" 또는 "SMS 본문" 변수를 다시 삽입하세요.',
+            received: smsText,
+          }, 422);
       }
       // SMS·알림 본문은 보통 50자 이상. 너무 짧으면 변수 미치환 또는 잘림 의심.
       if (smsText.length < 30) {
         console.warn('[sms-ingest] suspicious short body', smsText);
-        return json({
-          error: 'body_too_short',
-          hint: `본문이 너무 짧음 (${smsText.length}자). 매크로 변수 치환 또는 발송 설정을 확인하세요.`,
-          received: smsText,
-        }, 422, cors);
+        return finish(
+          { result: 'body_too_short', source: ingest_source, detail: `본문 ${smsText.length}자 — 변수 미치환/잘림 의심`, preview: smsText },
+          {
+            error: 'body_too_short',
+            hint: `본문이 너무 짧음 (${smsText.length}자). 매크로 변수 치환 또는 발송 설정을 확인하세요.`,
+            received: smsText,
+          }, 422);
       }
 
       const parsed = parseFinanceSms(smsText);
       console.log('[sms-ingest] parsed', JSON.stringify(parsed));
       if (!parsed) {
-        return json({
-          error: 'parse_failed',
-          hint: '금액(원) 패턴을 못 찾았습니다. SMS 본문을 확인하세요.',
-          received_chars: smsText.length,
-        }, 422, cors);
+        return finish(
+          { result: 'parse_failed', source: ingest_source, detail: '금액(원) 패턴 못 찾음', preview: smsText },
+          {
+            error: 'parse_failed',
+            hint: '금액(원) 패턴을 못 찾았습니다. SMS 본문을 확인하세요.',
+            received_chars: smsText.length,
+          }, 422);
       }
 
-      const ingest_source = String(body.source || 'card-sms').slice(0, 32);
       const note = String(body.note || '').trim().slice(0, 200);
-
-      const stateObj = await readStateV2(env);
 
       const time = parsed.time || '';
       const card = parsed.card || '';
@@ -463,6 +507,13 @@ export default {
       stateObj.entries.push(entry);
       // 자동 ingest heartbeat — 매크로가 살아있는지 프론트에서 가시화하기 위한 신호
       stateObj.last_ingest_at = new Date().toISOString();
+      recordIngest(stateObj, {
+        result: 'ok', source: ingest_source,
+        detail: entry.type === 'expense'
+          ? `지출 ${entry.amount.toLocaleString()}원 · ${entry.merchant} (${entry.category})`
+          : `수입 ${entry.amount.toLocaleString()}원 · ${entry.source}`,
+        preview: smsText,
+      });
 
       const newRaw = JSON.stringify(stateObj);
       if (newRaw.length > MAX_BYTES) {
