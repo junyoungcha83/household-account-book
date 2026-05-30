@@ -426,16 +426,25 @@ export default {
         return json(respBody, status, cors);
       };
 
-      let body;
-      try { body = await req.json(); }
-      catch {
-        return finish(
-          { result: 'invalid_json', source: '', detail: 'JSON 파싱 실패 (Content-Type/본문 확인)' },
-          { error: 'invalid_json' }, 400);
+      // 본문은 JSON 또는 평문(plain-text) 둘 다 허용.
+      // - JSON: {"body": "...", "source": "..."} — curl·기존 매크로 (하위호환)
+      // - 평문: 매크로 Body 에 매직텍스트 하나만 (예: [알림 텍스트]) → JSON·따옴표·줄바꿈
+      //   이스케이프 신경 안 써도 됨. source 는 URL 쿼리(?source=card-sms-mine)로.
+      const raw = (await req.text()) || '';
+      let smsText, ingest_source, note;
+      let jsonBody = null;
+      try { jsonBody = JSON.parse(raw); } catch {}
+      if (jsonBody && typeof jsonBody === 'object' && !Array.isArray(jsonBody) && (jsonBody.body || jsonBody.text)) {
+        smsText = String(jsonBody.body || jsonBody.text || '').trim();
+        ingest_source = String(jsonBody.source || url.searchParams.get('source') || 'card-sms').slice(0, 32);
+        note = String(jsonBody.note || '').trim().slice(0, 200);
+      } else {
+        // 평문 모드 — 받은 본문 전체가 곧 SMS/알림 본문
+        smsText = raw.trim();
+        ingest_source = String(url.searchParams.get('source') || 'card-sms').slice(0, 32);
+        note = '';
       }
 
-      const ingest_source = String(body.source || 'card-sms').slice(0, 32);
-      const smsText = String(body.body || body.text || '').trim();
       if (!smsText) {
         return finish(
           { result: 'empty_body', source: ingest_source, detail: 'body 가 비어있음' },
@@ -445,10 +454,10 @@ export default {
       // 진단 로그 — wrangler tail 로 확인 가능. 금액 파싱 이슈 디버깅 용.
       console.log('[sms-ingest] received', JSON.stringify({ len: smsText.length, preview: smsText.slice(0, 400) }));
 
-      // 매크로의 변수 치환 실패 케이스 — Macrodroid 가 {notification}, {sms_body} 같은
-      // placeholder 를 그대로 보내는 경우. parse 시도 전에 명확한 hint 반환해 사용자가
-      // 즉시 매크로 설정 문제를 알 수 있도록.
-      if (/^\{[a-z_][a-z_0-9]*\}$/i.test(smsText)) {
+      // 매크로의 변수 치환 실패 케이스 — MacroDroid 가 {notification}·{sms_body}(중괄호)
+      // 또는 [notification_text]·[알림 텍스트](대괄호)를 치환 못 하고 그대로 보내는 경우.
+      // 한 줄짜리 단일 토큰만 매칭(여러 줄 실제 본문은 $ 로 자연 배제).
+      if (/^[\[{][\w가-힣 ]{1,40}[\]}]$/.test(smsText)) {
         console.warn('[sms-ingest] unsubstituted placeholder', smsText);
         return finish(
           { result: 'unsubstituted_placeholder', source: ingest_source, detail: '매크로 변수 미치환', preview: smsText },
@@ -482,8 +491,6 @@ export default {
             received_chars: smsText.length,
           }, 422);
       }
-
-      const note = String(body.note || '').trim().slice(0, 200);
 
       const time = parsed.time || '';
       const card = parsed.card || '';

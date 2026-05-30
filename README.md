@@ -105,20 +105,31 @@ cd worker && echo "새토큰" | npx wrangler secret put EDIT_TOKEN
 
 #### Action (동작) — HTTP 요청
 
+> 서버는 **평문(plain-text) 본문**을 받습니다. 매크로 Body 에 **매직텍스트 변수 하나만** 넣으면 끝 —
+> JSON·따옴표·중괄호를 직접 쓸 필요가 없습니다(카드 알림의 줄바꿈 때문에 JSON 으로 감싸면 오히려 깨짐).
+
 - "Actions" → "Connectivity" → "HTTP Request"
-- **URL**: `https://household-account-book-api.junyoung-cha83.workers.dev/api/sms-ingest`
+- **URL** (출처 구분은 `?source=` 쿼리로):
+  ```
+  https://household-account-book-api.junyoung-cha83.workers.dev/api/sms-ingest?source=card-sms-mine
+  ```
+  - 배우자 폰에선 `?source=card-sms-spouse` (출처 구분 — 디버그용. 통계엔 영향 X)
 - **Method**: POST
-- **Content-Type**: `application/json`
 - **Custom Headers**:
   ```
   X-Ingest-Token: <INGEST_TOKEN 발급값>
   ```
-- **Body** (raw, JSON):
-  ```json
-  {"body": "[sms]", "source": "card-sms-mine"}
+- **Body** (변수 하나만 — JSON·따옴표 없이):
   ```
-  - `[sms]` 부분에 MacroDroid 변수 삽입 (옵션 A 면 `[sms=body]`, 옵션 B 면 `[notification_text]`. 매크로 UI 의 "Insert magic text" 메뉴에서 골라 넣음)
-  - 배우자 폰에선 `"source": "card-sms-spouse"` 로 바꿈 (출처 구분 — 디버그용. 통계엔 영향 X)
+  [알림 텍스트]
+  ```
+  - MacroDroid "Insert magic text(매직 텍스트 삽입)" 메뉴에서 **알림 텍스트(`notification_text`)** 를 골라 넣습니다(직접 타이핑 ✕).
+  - 옵션 A(SMS 트리거)면 대신 **SMS 본문(`sms_body`)** 변수를 넣습니다.
+  - 본문이 짧으면(카드사가 내용을 "알림 큰 텍스트"에 담는 경우) 매직텍스트를 **알림 큰 텍스트**로 바꿔보세요.
+  - 변수가 치환 안 돼 `[notification_text]`·`{notification}` 처럼 그대로 도착하면, 앱 "자동 수신 점검"에
+    **⚠️ 변수 미치환**으로 표시됩니다 → 매직텍스트 메뉴에서 다시 삽입.
+
+> 하위호환: 기존 JSON 방식 `{"body":"...","source":"..."}` 도 그대로 동작합니다(curl 테스트 등).
 
 ### 동작 확인
 
