@@ -132,6 +132,28 @@ function migrateToV2(loaded) {
   };
 }
 
+// SMS 본문에서 카드사 이름 추출 (우리·신한·하나·삼성 등).
+// "<카드사>카드/체크/페이/뱅크" 형태로만 매칭 → 가맹점명(삼성전자 등) 오인식 방지.
+function detectCardIssuer(text) {
+  const m = String(text || '').match(
+    /(우리|신한|하나|삼성|현대|롯데|KB국민|국민|KB|NH농협|농협|NH|비씨|BC|씨티|카카오뱅크|카카오|토스|케이뱅크|케이|수협|새마을|광주|전북|제주)\s*(?:카드|체크카드|체크|페이|뱅크|은행|머니)/
+  );
+  if (!m) return '';
+  const map = { 'KB국민': '국민', 'KB': '국민', 'NH농협': '농협', 'NH': '농협', 'BC': '비씨',
+                '카카오뱅크': '카카오', '케이뱅크': '케이', '케이': '케이' };
+  return map[m[1]] || m[1];
+}
+
+// 가맹점 후보가 그럴듯한지 — 금액·누적·날짜만 있는 줄 걸러냄.
+function looksLikeMerchant(s) {
+  const t = String(s || '').trim();
+  if (t.length < 2) return false;
+  if (!/[가-힣A-Za-z]{2}/.test(t)) return false;            // 한글/영문 2자 이상 포함
+  if (/^[\d,\s]*원/.test(t)) return false;                   // 금액으로 시작
+  if (/^(누적|총누적|잔액|잔여|한도|승인|취소|이용)/.test(t)) return false;
+  return true;
+}
+
 // 한국 금융 SMS/RCS 본문 → type(expense/income) 자동 판단 + 필드 추출
 // 카드 결제 (expense) · 은행 입금 (income) 모두 처리
 // 반환: { type, amount, merchant|source, date } 또는 null (금액 못 찾으면)
@@ -212,12 +234,18 @@ function parseFinanceSms(body) {
     }
   }
 
-  // 카드명 — 카드사가 SMS 에 표기한 라벨 (예: "카드 하나2*4*") 그대로 추출
-  let card = '';
+  // 카드사 이름(우리·신한·하나·삼성 등) + 카드 라벨("카드 하나2*4*") 결합 → 표시용 card.
+  // 현재 표시 구조(메타 줄 "시각 · card") 그대로 — card 문자열에 카드사명이 포함되게만 함.
+  const issuer = detectCardIssuer(text);
+  let cardLabel = '';
   const cardMatch = text.match(/(?:^|[\n\r])\s*카드\s*[:\s]+([^\n\r]+)/);
   if (cardMatch) {
-    card = cardMatch[1].trim().replace(/\s{2,}/g, ' ').slice(0, 30);
+    cardLabel = cardMatch[1].trim().replace(/\s{2,}/g, ' ').slice(0, 30);
   }
+  let card = '';
+  if (issuer && cardLabel) card = cardLabel.includes(issuer) ? cardLabel : `${issuer} ${cardLabel}`;
+  else card = issuer || cardLabel;
+  card = card.slice(0, 30);
 
   // 3) type 판정 (income 시그널 우선)
   const isIncome =
@@ -246,19 +274,32 @@ function parseFinanceSms(body) {
     return { type: 'income', amount, source, date, time, card };
   }
 
-  // 4) expense — 가맹점 추출
+  // 4) expense — 가맹점 추출. 카드사별 위치가 달라 라벨 → 카드사별 위치 순으로 시도.
   let merchant = '';
   const merchantPatterns = [
-    /사용처\s*[:\s\n]*\s*([^\n\r]+?)(?:\s*거래시간|[\n\r])/,
-    /가맹점\s*[:\s\n]*\s*([^\n\r]+?)(?:[\n\r]|$)/,
-    /\d{1,2}\/\d{1,2}\s+\d{1,2}:\d{1,2}\s*[\n\r]+\s*([^\n\r]+)/,
+    // 라벨 기반(가장 신뢰) — 하나("사용처"), 공통("가맹점"/"이용가맹점")
+    /사용처\s*[:\s]*([^\n\r]+)/,
+    /이용가맹점\s*[:\s]*([^\n\r]+)/,
+    /가맹점\s*[:\s]*([^\n\r]+)/,
+    // 신한 — "MM/DD일 기준" 이후
+    /\d{1,2}[\/.]\d{1,2}일?\s*기준\s*([^\n\r]+)/,
+    // 우리 — "총누적 …원" 다음 줄
+    /총누적[^\n\r]*원\s*[\n\r]+\s*([^\n\r]+)/,
+    // 삼성 — "MM/DD HH:MM" 같은 줄 뒤에 바로
+    /\d{1,2}[\/.]\d{1,2}\s+\d{1,2}:\d{1,2}\s+(\S[^\n\r]*)/,
+    // 공통 — 날짜·시각 다음 줄
+    /\d{1,2}[\/.]\d{1,2}\s+\d{1,2}:\d{1,2}\s*[\n\r]+\s*([^\n\r]+)/,
+    // 공통 — 일시불/할부 다음 줄
     /(?:일시불|할부)\s*[\n\r]+\s*([^\n\r]+)/,
   ];
   for (const p of merchantPatterns) {
     const m = text.match(p);
     if (m && m[1]) {
-      merchant = m[1].trim().replace(/(?:누적|잔여|승인|취소|이용내역).*$/u, '').trim();
-      if (merchant) break;
+      const cand = m[1].trim()
+        .replace(/\s*[\d,]+\s*원.*$/u, '')                                  // 뒤따르는 금액 이하 제거
+        .replace(/(?:누적|잔여|잔액|한도|승인|취소|이용내역|거래시간).*$/u, '')   // 부가 라벨 이하 제거
+        .trim();
+      if (looksLikeMerchant(cand)) { merchant = cand.slice(0, 40); break; }
     }
   }
   return { type: 'expense', amount, merchant, date, time, card };
