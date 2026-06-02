@@ -275,6 +275,14 @@ function parseFinanceSms(body) {
     return { type: 'income', amount, source, date, time, card };
   }
 
+  // 카드 결제 신호 게이트 — 뉴스·광고·SNS·기프티콘 등이 '숫자+원'만으로 지출로 오인되지 않게.
+  // 결제 알림에 흔한 키워드(승인·일시불·할부·사용처·가맹점·카드사명·'금액 …원' 라벨)가 하나도
+  // 없으면 카드 거래가 아니라고 보고 기록하지 않음.
+  const cardSignal = issuer
+    || /승인|일시불|할부|사용처|가맹점|체크승인|카드\s*[:\s]*\S/.test(text)
+    || /(?:^|[\n\r\]\s])금액[:\s]*[\d,]+\s*원/.test(text);
+  if (!cardSignal) return null;
+
   // 4) expense — 가맹점 추출. 카드사별 위치가 달라 라벨 → 카드사별 위치 순으로 시도.
   let merchant = '';
   const merchantPatterns = [
@@ -520,6 +528,13 @@ export default {
             hint: `본문이 너무 짧음 (${smsText.length}자). 매크로 변수 치환 또는 발송 설정을 확인하세요.`,
             received: smsText,
           }, 422);
+      }
+
+      // 광고 문자 — 무시(거래 아님). 한국 광고 SMS 는 '(광고)' 표기가 의무.
+      if (/\(\s*광고\s*\)/.test(smsText) || /^\s*\[?\s*광고\s*\]?/.test(smsText)) {
+        return finish(
+          { result: 'ad_skipped', source: ingest_source, detail: '광고 문자 — 무시', preview: smsText },
+          { ok: true, skipped: 'ad' }, 200);
       }
 
       const parsed = parseFinanceSms(smsText);
