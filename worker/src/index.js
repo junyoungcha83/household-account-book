@@ -548,6 +548,14 @@ export default {
       const parsed = parseFinanceSms(smsText);
       console.log('[sms-ingest] parsed', JSON.stringify(parsed));
       if (!parsed) {
+        // 카드사 앱 푸시 '요약 알림'(예: "OO점 / 신용(일시불,1*7*) / 06.11 17:54 / 누적이용금액 …원").
+        // 단건 결제금액 없이 누적금액만 있어 파싱 불가하지만, 동일 거래의 정식 SMS가 따로 와서
+        // 이미 기록되므로 '실패'가 아니라 조용히 건너뜀(로그 노이즈 방지).
+        if (/\/\s*(?:신용|체크|할부)\s*\(/.test(smsText) || /누적\s*이용금액/.test(smsText)) {
+          return finish(
+            { result: 'card_push_skipped', source: ingest_source, detail: '카드앱 요약 알림(누적만) — 건너뜀', preview: smsText },
+            { ok: true, skipped: 'card_push_summary' }, 200);
+        }
         return finish(
           { result: 'parse_failed', source: ingest_source, detail: '금액(원) 패턴 못 찾음', preview: smsText },
           {
