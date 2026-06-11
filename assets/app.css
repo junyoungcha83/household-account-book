@@ -687,3 +687,12 @@ body.read-only .fab { display: none; }
 /* ── 잡 ── */
 .hidden { display: none !important; }
 .muted { color: var(--muted); font-size: .8rem; }
+
+/* 취소된 거래 — 목록엔 표시하되 취소선 + 합계 제외 */
+.txn-row.cancelled .merchant,
+.txn-row.cancelled .amount { text-decoration: line-through; opacity: .55; }
+.cancel-badge {
+  display:inline-block; margin-left:6px; font-size:.66rem; font-weight:700;
+  color:#d62728; background:#fdecea; border-radius:5px; padding:1px 5px; vertical-align:middle;
+  text-decoration:none;
+}

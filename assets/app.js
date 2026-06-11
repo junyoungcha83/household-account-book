@@ -260,12 +260,14 @@ function entriesOfMonth(mk) {
 }
 function expensesOfMonth(mk)     { return entriesOfMonth(mk).filter(e => e.type === 'expense'); }
 function incomesOfMonth(mk)      { return entriesOfMonth(mk).filter(e => e.type === 'income'); }
-function totalExpenseOfMonth(mk) { return expensesOfMonth(mk).reduce((s,e) => s + (Number(e.amount)||0), 0); }
-function totalIncomeOfMonth(mk)  { return incomesOfMonth(mk).reduce((s,e) => s + (Number(e.amount)||0), 0); }
+// 합계·예산은 취소된 거래 제외 (cancelled 항목은 목록엔 보이되 금액엔 미반영)
+function totalExpenseOfMonth(mk) { return expensesOfMonth(mk).filter(e => !e.cancelled).reduce((s,e) => s + (Number(e.amount)||0), 0); }
+function totalIncomeOfMonth(mk)  { return incomesOfMonth(mk).filter(e => !e.cancelled).reduce((s,e) => s + (Number(e.amount)||0), 0); }
 function byCategoryOfMonth(mk) {
   const out = {};
   for (const c of state.categories) out[c] = 0;
   for (const e of expensesOfMonth(mk)) {
+    if (e.cancelled) continue;
     const c = state.categories.includes(e.category) ? e.category : '기타';
     out[c] = (out[c] || 0) + (Number(e.amount) || 0);
   }
@@ -427,9 +429,9 @@ function renderBook() {
       `;
     }
     return dayHeader + `
-      <div class="txn-row expense" data-id="${escapeAttr(e.id)}">
+      <div class="txn-row expense${e.cancelled ? ' cancelled' : ''}" data-id="${escapeAttr(e.id)}">
         <div class="left">
-          <div class="merchant">${escapeHtml(e.merchant || '(이름 없음)')}</div>
+          <div class="merchant">${escapeHtml(e.merchant || '(이름 없음)')}${e.cancelled ? ' <span class="cancel-badge">취소</span>' : ''}</div>
           ${metaHtml}
           ${e.note ? `<div class="note">${escapeHtml(e.note)}</div>` : ''}
         </div>

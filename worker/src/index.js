@@ -567,6 +567,37 @@ export default {
           }, 422);
       }
 
+      // 취소 처리 — 승인/취소는 본문 텍스트가 동일하고 헤더 이미지로만 구분되므로,
+      // MacroDroid OCR이 본문에 '취소' 글자를 넣어준 경우에만 취소로 처리한다.
+      // 같은 금액+카드(+가맹점)의 최근 '미취소 지출'을 찾아 취소 표시(합계 제외). 새 지출 추가 안 함.
+      if (parsed.type === 'expense' && /취소/.test(smsText)) {
+        const orig = [...stateObj.entries].reverse().find(e =>
+          e.type === 'expense' && !e.cancelled && e.amount === parsed.amount &&
+          (parsed.card ? (e.card || '') === parsed.card : true) &&
+          (parsed.merchant ? ((e.merchant || '').includes(parsed.merchant) || parsed.merchant.includes(e.merchant || '')) : true)
+        );
+        if (orig) {
+          orig.cancelled = true;
+          orig.cancelled_at = parsed.date + (parsed.time ? ' ' + parsed.time : '');
+          stateObj.last_ingest_at = new Date().toISOString();
+          recordIngest(stateObj, { result: 'cancelled', source: ingest_source,
+            detail: `취소 ${parsed.amount.toLocaleString()}원 · ${orig.merchant} → 원거래 취소처리`, preview: smsText });
+        } else {
+          // 원거래 미발견 — 취소 항목을 표시용으로 추가(합계 제외)
+          const cat0 = classifyCategory(parsed.merchant, stateObj.category_rules, stateObj.categories);
+          stateObj.entries.push({ id: genId(), type: 'expense', date: parsed.date, amount: parsed.amount,
+            merchant: parsed.merchant || '(가맹점 미상)', category: cat0, note: '취소(원거래 미발견)',
+            source: ingest_source, cancelled: true, ...(parsed.time && { time: parsed.time }), ...(parsed.card && { card: parsed.card }) });
+          stateObj.last_ingest_at = new Date().toISOString();
+          recordIngest(stateObj, { result: 'cancel_unmatched', source: ingest_source,
+            detail: `취소 ${parsed.amount.toLocaleString()}원 · 원거래 미발견(표시만)`, preview: smsText });
+        }
+        const rawC = JSON.stringify(stateObj);
+        if (rawC.length > MAX_BYTES) return json({ error: 'too_large', limit: MAX_BYTES, size: rawC.length }, 413, cors);
+        await env.HOUSEHOLD.put(KEY, rawC);
+        return json({ ok: true, cancel: true, matched: !!orig, amount: parsed.amount }, 200, cors);
+      }
+
       const time = parsed.time || '';
       const card = parsed.card || '';
       let entry;
