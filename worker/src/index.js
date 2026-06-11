@@ -220,11 +220,13 @@ function parseFinanceSms(body) {
   }
   if (!amount) return null;
 
-  // 2) 날짜 + 시간 (공통, MM/DD HH:MM 또는 MM-DD)
+  // 2) 날짜 + 시간 — '거래시간/승인시각' 라벨의 시각을 우선 사용.
+  // (맨 앞에 전송시각 등 다른 날짜가 끼어들어도 실제 거래시각을 잡도록. 라벨 없으면 첫 날짜로 폴백.)
   const today = new Date();
   let date = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
   let time = '';
-  const dm = text.match(/(\d{1,2})[\/.\-](\d{1,2})(?:\s+(\d{1,2}):(\d{1,2}))?/);
+  const dm = text.match(/(?:거래시간|승인시각|승인일시|이용일시|거래일시)\s*[:]?\s*(\d{1,2})[\/.\-](\d{1,2})(?:\s+(\d{1,2}):(\d{1,2}))?/)
+          || text.match(/(\d{1,2})[\/.\-](\d{1,2})(?:\s+(\d{1,2}):(\d{1,2}))?/);
   if (dm) {
     const mm = parseInt(dm[1], 10);
     const dd = parseInt(dm[2], 10);
