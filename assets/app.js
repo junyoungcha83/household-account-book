@@ -431,7 +431,7 @@ function renderBook() {
     return dayHeader + `
       <div class="txn-row expense${e.cancelled ? ' cancelled' : ''}" data-id="${escapeAttr(e.id)}">
         <div class="left">
-          <div class="merchant">${escapeHtml(e.merchant || '(이름 없음)')}${e.cancelled ? ' <span class="cancel-badge">취소</span>' : ''}</div>
+          <div class="merchant">${escapeHtml(e.merchant || '(이름 없음)')}${e.cancelled ? ` <span class="cancel-badge" title="${escapeAttr((e.cancel_note || '취소') + ' · 탭하면 해제')}">${/중복/.test(e.cancel_note || '') ? '취소?' : '취소'}</span>` : ''}</div>
           ${metaHtml}
           ${e.note ? `<div class="note">${escapeHtml(e.note)}</div>` : ''}
         </div>
@@ -445,6 +445,14 @@ function renderBook() {
   listEl.querySelectorAll('.txn-row').forEach(el => {
     el.onclick = () => {
       if (!getEditToken()) return;
+      const ent = state.entries.find(x => x.id === el.dataset.id);
+      if (ent && ent.cancelled) {   // 취소(중복감지 포함) 해제 — 오인 시 실제 결제로 되돌림
+        if (confirm('취소를 해제하고 실제 결제로 되돌릴까요?')) {
+          delete ent.cancelled; delete ent.cancel_note; delete ent.cancelled_at;
+          saveLocal(); render();
+        }
+        return;
+      }
       openTxnDialog(el.dataset.id);
     };
   });

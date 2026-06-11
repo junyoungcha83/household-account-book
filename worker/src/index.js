@@ -598,6 +598,30 @@ export default {
         return json({ ok: true, cancel: true, matched: !!orig, amount: parsed.amount }, 200, cors);
       }
 
+      // 중복 감지 — 같은 금액+카드+가맹점의 최근(1일 내) 미취소 지출이 이미 있으면,
+      // 이번 건을 '취소'로 간주(승인/취소가 텍스트로 구분 안 되므로). 원거래를 취소 처리하고 새 지출은 추가 안 함.
+      // 같은 금액을 같은 곳에서 실제로 두 번 결제한 경우 오인될 수 있어 '취소 추정'으로 표시(앱에서 해제 가능).
+      if (parsed.type === 'expense') {
+        const within1d = (d) => { try { return Math.abs(new Date(parsed.date + 'T00:00:00') - new Date(d + 'T00:00:00')) <= 24 * 3600 * 1000; } catch { return false; } };
+        const dup = [...stateObj.entries].reverse().find(e =>
+          e.type === 'expense' && !e.cancelled && e.amount === parsed.amount &&
+          (e.merchant || '') === (parsed.merchant || '') &&
+          (parsed.card ? (e.card || '') === parsed.card : true) &&
+          within1d(e.date || ''));
+        if (dup) {
+          dup.cancelled = true;
+          dup.cancel_note = '중복감지(취소 추정)';
+          dup.cancelled_at = parsed.date + (parsed.time ? ' ' + parsed.time : '');
+          stateObj.last_ingest_at = new Date().toISOString();
+          recordIngest(stateObj, { result: 'dup_cancelled', source: ingest_source,
+            detail: `중복감지 ${parsed.amount.toLocaleString()}원 · ${dup.merchant} → 원거래 취소처리`, preview: smsText });
+          const rawD = JSON.stringify(stateObj);
+          if (rawD.length > MAX_BYTES) return json({ error: 'too_large', limit: MAX_BYTES, size: rawD.length }, 413, cors);
+          await env.HOUSEHOLD.put(KEY, rawD);
+          return json({ ok: true, dup_cancelled: dup.id, amount: parsed.amount }, 200, cors);
+        }
+      }
+
       const time = parsed.time || '';
       const card = parsed.card || '';
       let entry;
