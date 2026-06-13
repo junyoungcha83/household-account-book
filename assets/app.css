@@ -696,3 +696,13 @@ body.read-only .fab { display: none; }
   color:#d62728; background:#fdecea; border-radius:5px; padding:1px 5px; vertical-align:middle;
   text-decoration:none;
 }
+
+/* 자동분류 룰 — 카테고리 인라인 수정 드롭다운 */
+.rule-cat{
+  font-size:.85rem; font-weight:700; color:#1a7a3a;
+  padding:3px 22px 3px 8px; margin-left:4px;
+  border:1px solid #e5e7eb; border-radius:6px; background:#fff; cursor:pointer;
+  appearance:none; -webkit-appearance:none;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' stroke='%231a7a3a' stroke-width='1.4' fill='none' stroke-linecap='round'/></svg>");
+  background-repeat:no-repeat; background-position:right 7px center;
+}

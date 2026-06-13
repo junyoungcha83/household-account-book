@@ -645,10 +645,27 @@ function renderSettings() {
     const sorted = state.category_rules.slice().reverse();
     rulesList.innerHTML = sorted.map((r, i) => `
       <div class="rule-row" data-pattern="${escapeAttr(r.pattern)}">
-        <span><span class="pattern">${escapeHtml(r.pattern)}</span><span class="arrow">→</span><span class="cat">${escapeHtml(r.category)}</span></span>
+        <span><span class="pattern">${escapeHtml(r.pattern)}</span><span class="arrow">→</span><select class="rule-cat" aria-label="카테고리 수정">${state.categories.map(c => `<option value="${escapeAttr(c)}"${c === r.category ? ' selected' : ''}>${escapeHtml(c)}</option>`).join('')}</select></span>
         <button class="del">×</button>
       </div>
     `).join('');
+    rulesList.querySelectorAll('.rule-cat').forEach(sel => {
+      sel.onchange = (e) => {
+        if (!ensureEditable()) { render(); return; }
+        const p = e.target.closest('[data-pattern]').dataset.pattern;
+        const rule = state.category_rules.find(r => r.pattern === p);
+        if (!rule) return;
+        const newCat = e.target.value;
+        rule.category = newCat;
+        // 동일 가맹점의 기존 거래도 일괄 변경할지
+        const matches = state.entries.filter(t => t.type === 'expense' && (t.merchant || '').includes(p));
+        if (matches.length && confirm(`"${p}" 가맹점의 기존 거래 ${matches.length}건도 "${newCat}"(으)로 바꿀까요?`)) {
+          for (const t of matches) t.category = newCat;
+        }
+        saveLocal();
+        render();
+      };
+    });
     rulesList.querySelectorAll('.del').forEach(btn => {
       btn.onclick = (e) => {
         if (!ensureEditable()) return;
@@ -885,8 +902,9 @@ function saveTxn() {
     if (editTxnId) {
       const e = state.entries.find(x => x.id === editTxnId);
       if (!e) return;
-      // type 도 바뀔 수 있음 (지출 → 수입). 필드 전체 재구성.
-      const newE = { id: e.id, type: 'income', date, amount, source: sourceName, note, ingest_source: e.ingest_source || 'manual' };
+      // type 도 바뀔 수 있음 (지출 → 수입). 필드 재구성 — time·card 등 기존 값 보존.
+      const newE = { id: e.id, type: 'income', date, amount, source: sourceName, note, ingest_source: e.ingest_source || 'manual',
+        ...(e.time && { time: e.time }), ...(e.card && { card: e.card }) };
       const idx = state.entries.indexOf(e);
       state.entries[idx] = newE;
     } else {
@@ -899,7 +917,10 @@ function saveTxn() {
       const e = state.entries.find(x => x.id === editTxnId);
       if (!e) return;
       const prevCategory = e.category;
-      const newE = { id: e.id, type: 'expense', date, amount, merchant, category, note, source: e.source || 'manual' };
+      // time·card·취소상태 등 기존 값 보존 (수정 시 시간이 사라지던 버그 수정).
+      const newE = { id: e.id, type: 'expense', date, amount, merchant, category, note, source: e.source || 'manual',
+        ...(e.time && { time: e.time }), ...(e.card && { card: e.card }),
+        ...(e.cancelled ? { cancelled: e.cancelled, cancel_note: e.cancel_note, cancelled_at: e.cancelled_at } : {}) };
       const idx = state.entries.indexOf(e);
       state.entries[idx] = newE;
       if (merchant && category !== prevCategory) learnCategory(merchant, category);
