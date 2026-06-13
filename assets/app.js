@@ -657,13 +657,12 @@ function renderSettings() {
         if (!rule) return;
         const newCat = e.target.value;
         rule.category = newCat;
-        // 동일 가맹점의 기존 거래도 일괄 변경할지
+        // 룰 변경 시 동일 가맹점의 기존 거래도 자동으로 함께 변경 (시간 등 다른 필드는 보존)
         const matches = state.entries.filter(t => t.type === 'expense' && (t.merchant || '').includes(p));
-        if (matches.length && confirm(`"${p}" 가맹점의 기존 거래 ${matches.length}건도 "${newCat}"(으)로 바꿀까요?`)) {
-          for (const t of matches) t.category = newCat;
-        }
+        for (const t of matches) t.category = newCat;
         saveLocal();
         render();
+        if (matches.length) alert(`"${p}" → "${newCat}"\n기존 거래 ${matches.length}건도 함께 변경했습니다.`);
       };
     });
     rulesList.querySelectorAll('.del').forEach(btn => {
