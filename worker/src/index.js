@@ -218,7 +218,18 @@ function parseFinanceSms(body) {
       }
     }
   }
-  if (!amount) return null;
+  // USD 등 외화 — 원화 금액이 없을 때 (예: "금액 USD22.00", "$22.00", "22.00 달러").
+  // 원화는 정수, 외화는 소수점 허용. 환산은 호출부(서버)에서 환율 적용.
+  let foreign = null;
+  if (!amount) {
+    const fx = amountText.match(/(?:US\$|USD|\$)\s*([\d,]+(?:\.\d+)?)/i)
+            || amountText.match(/([\d,]+(?:\.\d+)?)\s*(?:USD|달러|불)/i);
+    if (fx) {
+      const v = parseFloat(fx[1].replace(/,/g, ''));
+      if (v > 0) foreign = { currency: 'USD', value: v };
+    }
+  }
+  if (!amount && !foreign) return null;
 
   // 2) 날짜 + 시간 — '거래시간/승인시각' 라벨의 시각을 우선 사용.
   // (맨 앞에 전송시각 등 다른 날짜가 끼어들어도 실제 거래시각을 잡도록. 라벨 없으면 첫 날짜로 폴백.)
@@ -282,7 +293,7 @@ function parseFinanceSms(body) {
       }
     }
     if (!source) source = '수입';
-    return { type: 'income', amount, source, date, time, card };
+    return { type: 'income', amount, source, date, time, card, ...(foreign && { foreign }) };
   }
 
   // 카드 결제 신호 게이트 — 뉴스·광고·SNS·기프티콘 등이 '숫자+원'만으로 지출로 오인되지 않게.
@@ -321,7 +332,7 @@ function parseFinanceSms(body) {
       if (looksLikeMerchant(cand)) { merchant = cand.slice(0, 40); break; }
     }
   }
-  return { type: 'expense', amount, merchant, date, time, card };
+  return { type: 'expense', amount, merchant, date, time, card, ...(foreign && { foreign }) };
 }
 
 // 하위 호환: 기존 호출 (지금은 sms-ingest 만 사용하지만 안전)
@@ -336,6 +347,30 @@ function json(body, status, extraHeaders) {
     status,
     headers: { 'Content-Type': 'application/json; charset=utf-8', ...extraHeaders },
   });
+}
+
+// USD→KRW 환율. stateObj.fx 에 하루 캐시. 조회 실패 시 env.USD_KRW_RATE → 기본값.
+const DEFAULT_USD_KRW = 1400;
+async function getUsdKrwRate(env, stateObj) {
+  try {
+    const fx = stateObj.fx;
+    if (fx && fx.usd_krw > 0 && fx.at && (Date.now() - Date.parse(fx.at) < 24 * 3600 * 1000)) {
+      return fx.usd_krw;
+    }
+  } catch {}
+  try {
+    const r = await fetch('https://open.er-api.com/v6/latest/USD');
+    if (r.ok) {
+      const j = await r.json();
+      const rate = j && j.rates && j.rates.KRW;
+      if (rate && rate > 0) {
+        stateObj.fx = { usd_krw: rate, at: new Date().toISOString() };
+        return rate;
+      }
+    }
+  } catch {}
+  const envRate = env.USD_KRW_RATE ? Number(env.USD_KRW_RATE) : 0;
+  return (stateObj.fx && stateObj.fx.usd_krw) || (envRate > 0 ? envRate : DEFAULT_USD_KRW);
 }
 
 // v1 (transactions/incomes) 또는 v2 (entries) 양쪽 받음
@@ -565,6 +600,14 @@ export default {
             hint: '금액(원) 패턴을 못 찾았습니다. SMS 본문을 확인하세요.',
             received_chars: smsText.length,
           }, 422);
+      }
+
+      // 외화(USD 등) — 원화로 환산해 기록하고, 원본 외화·적용 환율은 note 에 보존.
+      if (parsed.foreign && !parsed.amount) {
+        const rate = await getUsdKrwRate(env, stateObj);
+        parsed.amount = Math.round(parsed.foreign.value * rate);
+        const fxNote = `${parsed.foreign.currency} ${parsed.foreign.value.toFixed(2)} · 환율 ${Math.round(rate).toLocaleString('ko-KR')}`;
+        note = note ? `${fxNote} · ${note}` : fxNote;
       }
 
       // 취소 처리 — 승인/취소는 본문 텍스트가 동일하고 헤더 이미지로만 구분되므로,
