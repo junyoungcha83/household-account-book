@@ -307,6 +307,8 @@ function parseFinanceSms(body) {
   // 4) expense — 가맹점 추출. 카드사별 위치가 달라 라벨 → 카드사별 위치 순으로 시도.
   let merchant = '';
   const merchantPatterns = [
+    // 해외승인 슬래시 형식 — "...해외승인/USD 22.00/ANTHROPIC* CLAUDE SU"
+    /(?:USD|달러|불)\s*[\d,.]+\s*\/\s*([^\/\n\r]+)/i,
     // 라벨 기반(가장 신뢰) — 하나("사용처"), 공통("가맹점"/"이용가맹점")
     /사용처\s*[:\s]*([^\n\r]+)/,
     /이용가맹점\s*[:\s]*([^\n\r]+)/,
