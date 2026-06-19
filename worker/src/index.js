@@ -93,6 +93,37 @@ function recordIngest(stateObj, { result, source, detail, preview }) {
   }
 }
 
+// 카드앱 '요약 푸시' 파싱 — 예: "금화갈매기 / 신용(일시불,2*4*) / 06.19 20:06 / 누적이용금액 8,204,902원"
+// 단건 금액은 없지만 카드별 '누적이용금액'을 줌 → 직전 누적과의 차이로 거래액 복구(상세 알림 미수신 대비).
+function parseCardSummary(text) {
+  if (!text) return null;
+  const t = String(text).replace(/ /g, ' ');
+  const cum = t.match(/누적\s*이용금액\s*([\d,]+)\s*원/);
+  if (!cum) return null;
+  const cumulative = parseInt(cum[1].replace(/,/g, ''), 10);
+  if (!(cumulative > 0)) return null;
+  const cardM = t.match(/\((?:[^,)]*,)?\s*([0-9][0-9*]+)\s*\)/);     // (일시불,2*4*) → 2*4*
+  const card = cardM ? cardM[1] : '';
+  const merM = t.match(/^\s*([^/\n]+?)\s*\/\s*(?:신용|체크|할부)/);    // 첫 세그먼트 = 가맹점
+  const merchant = merM ? merM[1].trim() : '';
+  let date = '', time = '';
+  const today = new Date();
+  const dm = t.match(/(\d{1,2})[.\/](\d{1,2})\s+(\d{1,2}):(\d{2})/);  // MM.DD HH:MM
+  if (dm) {
+    const mm = parseInt(dm[1], 10), dd = parseInt(dm[2], 10);
+    let y = today.getFullYear();
+    if (today.getMonth() === 0 && mm === 12) y -= 1;
+    else if (today.getMonth() === 11 && mm === 1) y += 1;
+    if (mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31)
+      date = `${y}-${String(mm).padStart(2, '0')}-${String(dd).padStart(2, '0')}`;
+    const hh = parseInt(dm[3], 10), mi = parseInt(dm[4], 10);
+    if (hh >= 0 && hh < 24 && mi >= 0 && mi < 60)
+      time = `${String(hh).padStart(2, '0')}:${String(mi).padStart(2, '0')}`;
+  }
+  if (!date) date = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  return { merchant, card, date, time, cumulative };
+}
+
 // v1 (transactions + incomes) → v2 (entries + type) 자동 마이그레이션. idempotent.
 function migrateToV2(loaded) {
   if (!loaded || typeof loaded !== 'object') return null;
@@ -591,9 +622,46 @@ export default {
         // 단건 결제금액 없이 누적금액만 있어 파싱 불가하지만, 동일 거래의 정식 SMS가 따로 와서
         // 이미 기록되므로 '실패'가 아니라 조용히 건너뜀(로그 노이즈 방지).
         if (/\/\s*(?:신용|체크|할부)\s*\(/.test(smsText) || /누적\s*이용금액/.test(smsText)) {
+          // 요약 푸시 — 카드별 누적이용금액 차분으로 거래액 복구(상세 알림 미수신 대비).
+          const sm = parseCardSummary(smsText);
+          if (!sm) {
+            return finish(
+              { result: 'card_push_skipped', source: ingest_source, detail: '카드앱 요약 알림(형식 불명) — 건너뜀', preview: smsText },
+              { ok: true, skipped: 'card_push_summary' }, 200);
+          }
+          if (!stateObj.card_cumulative || typeof stateObj.card_cumulative !== 'object') stateObj.card_cumulative = {};
+          const prev = stateObj.card_cumulative[sm.card];
+          stateObj.card_cumulative[sm.card] = sm.cumulative;     // 항상 최신 누적 갱신
+          stateObj.last_ingest_at = new Date().toISOString();
+          const delta = (typeof prev === 'number') ? sm.cumulative - prev : null;
+          if (delta === null || delta <= 0) {                    // 첫 관측 또는 월결산 리셋/취소 → 기록 안 함
+            return finish(
+              { result: 'summary_seen', source: ingest_source,
+                detail: `요약 누적 ${sm.cumulative.toLocaleString()}원 저장(${sm.card || '?'})`, preview: smsText },
+              { ok: true, summary: 'seen' }, 200);
+          }
+          // delta>0 = 거래액 후보. 같은 금액+카드 최근(≤1일) 미취소 지출 있으면 이미 기록된 것(중복 추가 금지).
+          const within1d = (d) => { try { return Math.abs(new Date(sm.date + 'T00:00:00') - new Date(d + 'T00:00:00')) <= 24 * 3600 * 1000; } catch { return false; } };
+          const matched = [...stateObj.entries].reverse().find(e =>
+            e.type === 'expense' && !e.cancelled && e.amount === delta &&
+            (sm.card ? (e.card || '').includes(sm.card) : true) && within1d(e.date || ''));
+          if (matched) {
+            return finish(
+              { result: 'summary_matched', source: ingest_source,
+                detail: `요약차분 ${delta.toLocaleString()}원 — 기존거래 확인(${matched.merchant})`, preview: smsText },
+              { ok: true, summary: 'matched' }, 200);
+          }
+          // 복구 — 상세 미수신분을 신규 지출로 기록.
+          const catR = classifyCategory(sm.merchant, stateObj.category_rules, stateObj.categories);
+          stateObj.entries.push({
+            id: genId(), type: 'expense', date: sm.date, amount: delta,
+            merchant: sm.merchant || '(가맹점 미상)', category: catR, note: '요약 누적차분 복구',
+            source: 'card-summary', ...(sm.time && { time: sm.time }), ...(sm.card && { card: '하나' + sm.card }),
+          });
           return finish(
-            { result: 'card_push_skipped', source: ingest_source, detail: '카드앱 요약 알림(누적만) — 건너뜀', preview: smsText },
-            { ok: true, skipped: 'card_push_summary' }, 200);
+            { result: 'summary_recovered', source: ingest_source,
+              detail: `복구 ${delta.toLocaleString()}원 · ${sm.merchant} (상세 미수신)`, preview: smsText },
+            { ok: true, summary: 'recovered', amount: delta }, 200);
         }
         return finish(
           { result: 'parse_failed', source: ingest_source, detail: '금액(원) 패턴 못 찾음', preview: smsText },
@@ -654,6 +722,22 @@ export default {
           (parsed.card ? (e.card || '') === parsed.card : true) &&
           within1d(e.date || ''));
         if (dup) {
+          if (dup.source === 'card-summary') {
+            // 요약 누적차분으로 먼저 복구된 동일거래에 상세 알림이 뒤늦게 도착 → 취소 아님.
+            // 상세 정보로 승격(보강)하고 새 항목은 추가하지 않음(이중기록 방지).
+            dup.source = ingest_source;
+            if (parsed.merchant) dup.merchant = parsed.merchant;
+            if (parsed.time) dup.time = parsed.time;
+            if (note) dup.note = note;
+            dup.category = classifyCategory(parsed.merchant, stateObj.category_rules, stateObj.categories);
+            stateObj.last_ingest_at = new Date().toISOString();
+            recordIngest(stateObj, { result: 'summary_confirmed', source: ingest_source,
+              detail: `요약복구→상세확인 ${parsed.amount.toLocaleString()}원 · ${dup.merchant}`, preview: smsText });
+            const rawU = JSON.stringify(stateObj);
+            if (rawU.length > MAX_BYTES) return json({ error: 'too_large', limit: MAX_BYTES, size: rawU.length }, 413, cors);
+            await env.HOUSEHOLD.put(KEY, rawU);
+            return json({ ok: true, summary_confirmed: dup.id, amount: parsed.amount }, 200, cors);
+          }
           dup.cancelled = true;
           dup.cancel_note = '중복감지(취소 추정)';
           dup.cancelled_at = parsed.date + (parsed.time ? ' ' + parsed.time : '');
