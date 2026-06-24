@@ -81,6 +81,11 @@ function migrate(loaded) {
       last_ingest_at: typeof loaded.last_ingest_at === 'string' ? loaded.last_ingest_at : undefined,
       // 자동수신 점검 로그도 round-trip 보존 (앱 PUT 가 KV 로그를 덮어쓰지 않게).
       ingest_log: Array.isArray(loaded.ingest_log) ? loaded.ingest_log : undefined,
+      // 서버 전용 필드 round-trip — 앱이 모르더라도 PUT 시 지우지 않게 보존.
+      //  card_cumulative: 카드별 누적이용금액 baseline(요약푸시 누적차분 복구의 기준). 지우면 복구 불능.
+      //  fx: USD/KRW 환율 하루 캐시.
+      card_cumulative: (loaded.card_cumulative && typeof loaded.card_cumulative === 'object') ? loaded.card_cumulative : undefined,
+      fx: (loaded.fx && typeof loaded.fx === 'object') ? loaded.fx : undefined,
     };
   }
   // v1 → v2
