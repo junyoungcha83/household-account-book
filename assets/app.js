@@ -282,6 +282,28 @@ function budgetOf(mk) {
   return state.budgets[mk] || { total: 0, by_category: {} };
 }
 
+// 카드사 추출 — 카드 필드 우선, 없으면 메모(note)에서 카드사명 탐지.
+const CARD_ISSUERS = ['하나','신한','삼성','국민','농협','카카오','토스','현대','롯데'];
+function issuerOf(text) {
+  const t = String(text || '');
+  if (!t) return null;
+  if (/KB|국민/.test(t)) return '국민';   // KB국민·KB → 국민
+  if (/NH|농협/.test(t)) return '농협';   // NH농협·NH → 농협
+  for (const name of CARD_ISSUERS) { if (t.includes(name)) return name; }
+  return null;
+}
+function issuerOfEntry(e) { return issuerOf(e.card) || issuerOf(e.note); }
+// 이번달 지출을 카드사별로 합산 (취소 제외). 카드사 미식별은 '기타'.
+function byIssuerOfMonth(mk) {
+  const out = {};
+  for (const e of expensesOfMonth(mk)) {
+    if (e.cancelled) continue;
+    const iss = issuerOfEntry(e) || '기타';
+    out[iss] = (out[iss] || 0) + (Number(e.amount) || 0);
+  }
+  return out;
+}
+
 // ── 렌더 ─────────────────────────────────────
 function render() {
   document.getElementById('monthLabel').textContent = fmtMonth(viewMonth);
@@ -505,6 +527,29 @@ function renderStats() {
       </div>
     `;
   }).join('');
+
+  // 카드사별 사용 — 금액 큰 순으로 정렬, 전체 대비 비율 막대
+  const byIss = byIssuerOfMonth(viewMonth);
+  const issEl = document.getElementById('statsIssuers');
+  const issRows = Object.entries(byIss).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
+  const issTotal = issRows.reduce((s, [, v]) => s + v, 0);
+  if (!issRows.length) {
+    issEl.innerHTML = `<div class="muted">이번달 카드 사용 없음</div>`;
+  } else {
+    issEl.innerHTML = issRows.map(([iss, v]) => {
+      const pct = issTotal > 0 ? Math.round(v / issTotal * 100) : 0;
+      return `
+        <div class="bar-row">
+          <div class="name">
+            <span>${escapeHtml(iss)}</span>
+            <span>${fmtWon(v)}</span>
+          </div>
+          <div class="amounts"><span class="delta">${pct}%</span></div>
+          <div class="bar"><div class="bar-fill" style="width:${pct}%"></div></div>
+        </div>
+      `;
+    }).join('');
+  }
 
   const incomes = incomesOfMonth(viewMonth);
   const incBlock = document.getElementById('incomeBlock');
