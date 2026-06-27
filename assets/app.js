@@ -10,7 +10,7 @@ const SAVE_DEBOUNCE_MS = 800;
 const DEFAULT_STATE = {
   version: 2,
   entries: [],
-  categories: ['식비', '교통비', '학원비', '의류구매비', '보험', '놀이', '기타'],
+  categories: ['식비', '교통비', '학원비', '의류구매비', '기타'],
   budgets: {},
   category_rules: [],
 };
@@ -67,25 +67,13 @@ function loadLocal() {
   return null;
 }
 
-// 필수 카테고리 보강 — 없으면 '기타' 앞에 추가 (idempotent)
-function ensureCategories(cats) {
-  const list = (Array.isArray(cats) && cats.length) ? cats.slice() : DEFAULT_STATE.categories.slice();
-  for (const c of ['보험', '놀이']) {
-    if (!list.includes(c)) {
-      const gi = list.indexOf('기타');
-      if (gi >= 0) list.splice(gi, 0, c); else list.push(c);
-    }
-  }
-  return list;
-}
-
 // v1 (transactions + incomes) 또는 v2 (entries) → v2 통합. idempotent.
 function migrate(loaded) {
   if (loaded && loaded.version === 2 && Array.isArray(loaded.entries)) {
     return {
       version: 2,
       entries: loaded.entries,
-      categories: ensureCategories(loaded.categories),
+      categories: Array.isArray(loaded.categories) && loaded.categories.length ? loaded.categories : DEFAULT_STATE.categories.slice(),
       budgets: (loaded.budgets && typeof loaded.budgets === 'object') ? loaded.budgets : {},
       category_rules: Array.isArray(loaded.category_rules) ? loaded.category_rules : [],
       // 서버에서 받은 자동 ingest heartbeat — manual 편집 → PUT 시 그대로 다시 보내
@@ -128,7 +116,7 @@ function migrate(loaded) {
   return {
     version: 2,
     entries,
-    categories: ensureCategories(loaded.categories),
+    categories: Array.isArray(loaded.categories) && loaded.categories.length ? loaded.categories : DEFAULT_STATE.categories.slice(),
     budgets: (loaded.budgets && typeof loaded.budgets === 'object') ? loaded.budgets : {},
     category_rules: Array.isArray(loaded.category_rules) ? loaded.category_rules : [],
   };
