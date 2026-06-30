@@ -319,6 +319,16 @@ input { font-family: inherit; font-size: 16px; }  /* iOS 입력 줌 방지: 16px
 }
 .bar-row:last-child { border-bottom: none; }
 .bar-row .name { font-weight: 600; font-size: .9rem; margin-bottom: 4px; display: flex; justify-content: space-between; }
+.bar-row.cat-toggle { cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.bar-row.cat-toggle:active { background: rgba(0,0,0,.03); }
+.cat-caret { color: var(--muted); font-size: .8em; }
+.cat-detail { padding: 4px 14px 10px; border-bottom: 1px solid var(--border); background: rgba(0,0,0,.025); }
+.cat-detail-row { display: flex; justify-content: space-between; gap: 8px; font-size: .8rem; padding: 4px 0; border-top: 1px solid var(--border); }
+.cat-detail-row:first-child { border-top: none; }
+.cat-detail .cd-date { color: var(--muted); white-space: nowrap; }
+.cat-detail .cd-merch { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cat-detail .cd-amt { font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
+.cat-detail-empty { font-size: .8rem; color: var(--muted); padding: 4px 0; }
 .bar-row .amounts { font-size: .75rem; color: var(--muted); font-variant-numeric: tabular-nums; }
 .bar-row .amounts .delta { font-weight: 600; }
 .bar-row .amounts .delta.over { color: var(--danger); }

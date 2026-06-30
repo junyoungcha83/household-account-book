@@ -18,6 +18,7 @@ const DEFAULT_STATE = {
 let state = JSON.parse(JSON.stringify(DEFAULT_STATE));
 let viewMonth = monthKey(new Date());   // "YYYY-MM" — 메인/통계가 보고있는 달
 let activeTab = 'book';
+let expandedStatCat = null;             // 통계탭 카테고리별 사용 — 펼친 카테고리
 let editTxnId = null;   // 입력 모달에서 편집 중인 거래 id (null이면 새 추가)
 
 // ── 유틸 ──────────────────────────────────────────
@@ -485,6 +486,20 @@ function renderBook() {
   });
 }
 
+// 카테고리별 당월 상세 내역(취소 제외, 날짜순)
+function catDetailHtml(cat) {
+  const list = expensesOfMonth(viewMonth)
+    .filter(e => !e.cancelled && (state.categories.includes(e.category) ? e.category : '기타') === cat)
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  if (!list.length) return '<div class="cat-detail-empty">이번달 내역 없음</div>';
+  return list.map(e => `
+    <div class="cat-detail-row">
+      <span class="cd-date">${escapeHtml((e.date || '').slice(5))}</span>
+      <span class="cd-merch">${escapeHtml(e.merchant || e.note || '-')}</span>
+      <span class="cd-amt">${fmtWon(e.amount)}</span>
+    </div>`).join('');
+}
+
 function renderStats() {
   const used = totalExpenseOfMonth(viewMonth);
   const bud  = budgetOf(viewMonth);
@@ -516,17 +531,24 @@ function renderStats() {
     } else {
       delta = '예산 X';
     }
+    const open = expandedStatCat === cat;
     return `
-      <div class="bar-row ${cls}">
+      <div class="bar-row ${cls} cat-toggle${open ? ' open' : ''}" data-cat="${escapeAttr(cat)}">
         <div class="name">
-          <span>${escapeHtml(cat)}</span>
+          <span>${escapeHtml(cat)} <span class="cat-caret">${open ? '▾' : '▸'}</span></span>
           <span>${fmtWon(u)}</span>
         </div>
         <div class="amounts">예산 ${fmtWonShort(b)} · <span class="delta ${deltaCls}">${escapeHtml(delta)}</span></div>
         <div class="bar"><div class="bar-fill" style="width:${fillPct}%"></div></div>
       </div>
+      ${open ? `<div class="cat-detail">${catDetailHtml(cat)}</div>` : ''}
     `;
   }).join('');
+  // 카테고리 막대 클릭 → 당월 상세목록 토글(다시 누르면 접힘)
+  bars.querySelectorAll('.cat-toggle').forEach(el => el.addEventListener('click', () => {
+    expandedStatCat = expandedStatCat === el.dataset.cat ? null : el.dataset.cat;
+    renderStats();
+  }));
 
   // 카드사별 사용 — 금액 큰 순으로 정렬, 전체 대비 비율 막대
   const byIss = byIssuerOfMonth(viewMonth);
