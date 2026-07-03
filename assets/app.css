@@ -412,10 +412,14 @@ input { font-family: inherit; font-size: 16px; }  /* iOS 입력 줌 방지: 16px
   display: flex; align-items: center; justify-content: space-between;
   gap: 8px;
   font-size: .9rem;
+  min-width: 0;               /* 라벨(플렉스 아이템)이 부모 폭을 넘지 않도록 */
 }
 .budget-form label .label-text { flex: 0 0 80px; font-weight: 500; }
 .budget-form input[type="number"] {
-  flex: 1;
+  flex: 1 1 0;
+  min-width: 0;               /* number input 기본 내재 폭 때문에 안 줄어드는 문제 해결 */
+  width: 100%;                /* 좁은 화면에서 남는 폭에 맞춰 축소 */
+  box-sizing: border-box;
   padding: 8px 10px;
   border: 1px solid var(--border);
   border-radius: 6px;
