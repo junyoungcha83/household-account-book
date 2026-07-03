@@ -633,15 +633,42 @@ export default {
           const prev = stateObj.card_cumulative[sm.card];
           stateObj.card_cumulative[sm.card] = sm.cumulative;     // 항상 최신 누적 갱신
           stateObj.last_ingest_at = new Date().toISOString();
+          const within1d = (d) => { try { return Math.abs(new Date(sm.date + 'T00:00:00') - new Date(d + 'T00:00:00')) <= 24 * 3600 * 1000; } catch { return false; } };
           const delta = (typeof prev === 'number') ? sm.cumulative - prev : null;
-          if (delta === null || delta <= 0) {                    // 첫 관측 또는 월결산 리셋/취소 → 기록 안 함
+          if (delta === null || delta === 0) {                   // 첫 관측(기준선 seed) 또는 동일 요약 재수신 → 기록 안 함
             return finish(
               { result: 'summary_seen', source: ingest_source,
                 detail: `요약 누적 ${sm.cumulative.toLocaleString()}원 저장(${sm.card || '?'})`, preview: smsText },
               { ok: true, summary: 'seen' }, 200);
           }
+          if (delta < 0) {
+            // 누적금액이 오히려 줄어든 채 새 요약 도착 = 상세문자 미수신 + 취소/리셋으로 차분 역산 불가.
+            // 같은 카드·가맹점 최근 지출이 이미 있으면 기록된 것으로 보고 seen, 없으면 '금액미상' 지출로
+            // 눈에 띄게 남겨 사용자가 금액만 채우도록 한다(조용히 버리지 않음).
+            const already = [...stateObj.entries].reverse().find(e =>
+              e.type === 'expense' && !e.cancelled &&
+              (sm.card ? (e.card || '').includes(sm.card) : true) &&
+              (sm.merchant ? ((e.merchant || '').includes(sm.merchant) || sm.merchant.includes(e.merchant || '')) : false) &&
+              within1d(e.date || ''));
+            if (already) {
+              return finish(
+                { result: 'summary_seen', source: ingest_source,
+                  detail: `요약 누적 ${sm.cumulative.toLocaleString()}원 저장(${sm.card || '?'}) — 기존거래 있음`, preview: smsText },
+                { ok: true, summary: 'seen' }, 200);
+            }
+            const catU = classifyCategory(sm.merchant, stateObj.category_rules, stateObj.categories);
+            stateObj.entries.push({
+              id: genId(), type: 'expense', date: sm.date, amount: 0, amount_unknown: true,
+              merchant: sm.merchant || '(가맹점 미상)', category: catU,
+              note: '금액미상 — 상세문자 미수신·누적차분 역산 불가. 금액 입력 필요',
+              source: 'card-summary-unknown', ...(sm.time && { time: sm.time }), ...(sm.card && { card: '하나' + sm.card }),
+            });
+            return finish(
+              { result: 'summary_unknown_amount', source: ingest_source,
+                detail: `금액미상 기록 · ${sm.merchant || '(가맹점 미상)'} (상세 미수신·차분 불가) — 앱에서 금액 입력 필요`, preview: smsText },
+              { ok: true, summary: 'unknown_amount' }, 200);
+          }
           // delta>0 = 거래액 후보. 같은 금액+카드 최근(≤1일) 미취소 지출 있으면 이미 기록된 것(중복 추가 금지).
-          const within1d = (d) => { try { return Math.abs(new Date(sm.date + 'T00:00:00') - new Date(d + 'T00:00:00')) <= 24 * 3600 * 1000; } catch { return false; } };
           const matched = [...stateObj.entries].reverse().find(e =>
             e.type === 'expense' && !e.cancelled && e.amount === delta &&
             (sm.card ? (e.card || '').includes(sm.card) : true) && within1d(e.date || ''));
@@ -709,6 +736,33 @@ export default {
         if (rawC.length > MAX_BYTES) return json({ error: 'too_large', limit: MAX_BYTES, size: rawC.length }, 413, cors);
         await env.HOUSEHOLD.put(KEY, rawC);
         return json({ ok: true, cancel: true, matched: !!orig, amount: parsed.amount }, 200, cors);
+      }
+
+      // 금액미상 요약 플레이스홀더 보강 — '금액미상'으로 남겨둔 요약건에 상세문자가 뒤늦게 도착하면
+      // 새 항목을 만들지 않고 기존 항목의 금액·가맹점·시간·분류를 채운다(이중기록 방지).
+      if (parsed.type === 'expense' && !/취소/.test(smsText)) {
+        const within1dP = (d) => { try { return Math.abs(new Date(parsed.date + 'T00:00:00') - new Date(d + 'T00:00:00')) <= 24 * 3600 * 1000; } catch { return false; } };
+        const ph = [...stateObj.entries].reverse().find(e =>
+          e.amount_unknown && e.type === 'expense' && !e.cancelled &&
+          (parsed.card ? ((e.card || '') === parsed.card || (e.card || '').includes(parsed.card)) : true) &&
+          (parsed.merchant ? ((e.merchant || '').includes(parsed.merchant) || parsed.merchant.includes(e.merchant || '')) : true) &&
+          within1dP(e.date || ''));
+        if (ph) {
+          ph.amount = parsed.amount;
+          delete ph.amount_unknown;
+          ph.source = ingest_source;
+          if (parsed.merchant) ph.merchant = parsed.merchant;
+          if (parsed.time) ph.time = parsed.time;
+          ph.category = classifyCategory(parsed.merchant, stateObj.category_rules, stateObj.categories);
+          ph.note = note || '';
+          stateObj.last_ingest_at = new Date().toISOString();
+          recordIngest(stateObj, { result: 'unknown_amount_filled', source: ingest_source,
+            detail: `금액미상 보강 ${parsed.amount.toLocaleString()}원 · ${ph.merchant}`, preview: smsText });
+          const rawP = JSON.stringify(stateObj);
+          if (rawP.length > MAX_BYTES) return json({ error: 'too_large', limit: MAX_BYTES, size: rawP.length }, 413, cors);
+          await env.HOUSEHOLD.put(KEY, rawP);
+          return json({ ok: true, unknown_filled: ph.id, amount: parsed.amount }, 200, cors);
+        }
       }
 
       // 중복 감지 — 같은 금액+카드+가맹점의 최근(1일 내) 미취소 지출이 이미 있으면,
