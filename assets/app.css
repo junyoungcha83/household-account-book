@@ -59,6 +59,7 @@ input { font-family: inherit; font-size: 16px; }  /* iOS 입력 줌 방지: 16px
   color: var(--muted);
 }
 .icon-btn:active { background: #f1f5f9; }
+@keyframes spin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
 .header-right { display: flex; align-items: center; gap: 4px; }
 .sync-status {
   font-size: .72rem;
@@ -514,6 +515,20 @@ input { font-family: inherit; font-size: 16px; }  /* iOS 입력 줌 방지: 16px
 }
 .fab:active { transform: scale(0.94); }
 body.read-only .fab { display: none; }
+
+/* 새로고침 FAB — + 버튼 위에 겹쳐 배치. 읽기 전용에서도 항상 표시(읽기 동작). */
+.fab-refresh {
+  width: 48px; height: 48px;
+  font-size: 1.35rem;
+  background: #fff;
+  color: var(--primary);
+  border: 1px solid var(--border);
+  box-shadow: 0 4px 14px rgba(0,0,0,.12);
+  bottom: calc(var(--tab-h) + var(--safe-bottom) + 14px + 60px + 12px);  /* + 버튼(60px) 위 */
+}
+body.read-only .fab-refresh { display: flex; }   /* 읽기 전용에서도 노출 */
+.fab-refresh.spinning { animation: spin 0.7s linear infinite; }
+.fab-refresh[disabled] { opacity: 0.6; cursor: default; }
 
 /* ── 하단 탭바 ── */
 .tab-bar {

@@ -1091,6 +1091,11 @@ function escapeAttr(s) { return escapeHtml(s); }
   document.getElementById('btnNextMonth').onclick = () => { viewMonth = shiftMonth(viewMonth,  1); render(); };
   document.getElementById('monthLabel').onclick   = () => { viewMonth = monthKey(new Date()); render(); };
   document.getElementById('btnEdit').onclick      = promptEditToken;
+  document.getElementById('btnRefreshFab').onclick = async (e) => {
+    const b = e.currentTarget;
+    b.disabled = true; b.classList.add('spinning');
+    try { await refreshFromServer(); } finally { b.disabled = false; b.classList.remove('spinning'); }
+  };
 
   // 탭
   document.querySelectorAll('.tab-btn').forEach(b => {
