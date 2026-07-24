@@ -54,7 +54,7 @@
 ### Worker 배포 (이미 1회만)
 
 ```
-cd worker
+cd api
 npx wrangler kv namespace create HOUSEHOLD   # 한 번
 echo "TOKEN" | npx wrangler secret put EDIT_TOKEN
 npx wrangler deploy
@@ -71,7 +71,7 @@ git push
 ### 편집 토큰 잃었을 때
 
 ```
-cd worker && echo "새토큰" | npx wrangler secret put EDIT_TOKEN
+cd api && echo "새토큰" | npx wrangler secret put EDIT_TOKEN
 ```
 
 ## 카드 결제 자동 연동 (Android · MacroDroid)
@@ -148,7 +148,7 @@ cd worker && echo "새토큰" | npx wrangler secret put EDIT_TOKEN
 - **⚠️ 변수 미치환 / body 비어있음** → HTTP Body 의 본문 변수를 매직텍스트로 다시 삽입.
 - **⚠️ JSON 오류** → Content-Type `application/json` 헤더 누락 또는 본문 형식 오류.
 - **⚠️ 파싱 실패** → 본문은 도착했으나 금액 패턴 못 찾음. 그 미리보기(본문)를 알려주시면 파서 보강
-  (`parseFinanceSms` in `worker/src/index.js`).
+  (`parseFinanceSms` in `api/src/index.js`).
 - **✅ 성공** → 정상 적재. 거래가 안 보이면 앱을 새로고침(또는 다른 앱 갔다 복귀).
 
 MacroDroid **"Test Actions"** 로 단독 실행한 뒤 이 패널을 새로고침하면 실제 결제 없이도 결과를 볼 수 있습니다.
@@ -166,7 +166,7 @@ MacroDroid **"Test Actions"** 로 단독 실행한 뒤 이 패널을 새로고�
 - `INGEST_TOKEN`: **매크로 전용** — 거래 *추가만* 가능 (수정·삭제 불가). 매크로에 박혀서 노출 위험이 있는데 영향 한정적.
 - 토큰 재발급:
   ```
-  cd worker
+  cd api
   echo "새토큰" | npx wrangler secret put INGEST_TOKEN
   ```
 

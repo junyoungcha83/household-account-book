@@ -187,7 +187,16 @@ async function pushToServer() {
 
 async function fetchFromServer() {
   try {
-    const res = await fetch(`${API_BASE}/api/data`, { cache: 'no-store' });
+    const token = getEditToken();
+    const res = await fetch(`${API_BASE}/api/data`, {
+      cache: 'no-store',
+      headers: token ? { 'X-Edit-Token': token } : {},
+    });
+    if (res.status === 401) {
+      // 읽기도 인증 필요 — 저장된 토큰이 틀리면 제거하고 읽기전용으로.
+      if (token) { localStorage.removeItem(TOKEN_KEY); updateEditUI(); }
+      return null;
+    }
     if (!res.ok) return null;
     const json = await res.json();
     // 서버가 v1 → v2 자동 변환해서 보내지만 안전하게 양쪽 받음
@@ -220,15 +229,26 @@ async function loadInitial() {
 // ── 편집 토큰 ─────────────────────────────────
 function getEditToken() { return localStorage.getItem(TOKEN_KEY) || ''; }
 
-function promptEditToken() {
+async function promptEditToken() {
   const cur = getEditToken();
   const v = prompt(cur ? '편집 비밀번호 (비우면 로그아웃):' : '편집 비밀번호를 입력하세요:', cur);
   if (v === null) return;
   if (v === '') localStorage.removeItem(TOKEN_KEY);
   else localStorage.setItem(TOKEN_KEY, v.trim());
   updateEditUI();
-  if (getEditToken()) pushToServer();
-  else setSyncStatus('readonly');
+  if (getEditToken()) {
+    // 읽기도 인증이 필요해졌으므로, 로그인 직후엔 서버 최신 상태를 먼저 pull 한다.
+    // (로컬이 비어있는 새 기기에서 pushToServer 하면 서버 데이터를 덮어써 손실되므로 pull-first)
+    const remote = await fetchFromServer();
+    if (remote) {
+      state = migrate(remote);
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) {}
+      render();
+    }
+    setSyncStatus('saved');
+  } else {
+    setSyncStatus('readonly');
+  }
 }
 
 function updateEditUI() {

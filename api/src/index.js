@@ -436,6 +436,11 @@ export default {
 
     if (url.pathname === '/api/data') {
       if (req.method === 'GET') {
+        // 읽기도 인증 필요 — 개인 금융 데이터라 X-Edit-Token 일치 시에만 반환.
+        const token = req.headers.get('X-Edit-Token') || '';
+        if (!env.EDIT_TOKEN || token !== env.EDIT_TOKEN) {
+          return json({ error: 'unauthorized' }, 401, cors);
+        }
         const raw = await env.HOUSEHOLD.get(KEY);
         // v1 데이터면 자동으로 v2 로 변환해서 반환 (KV 에는 아직 v1 그대로 — 다음 PUT 시 굳어짐)
         let out = 'null';
