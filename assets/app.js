@@ -325,6 +325,19 @@ function byIssuerOfMonth(mk) {
   return out;
 }
 
+// 이번달 지출을 날짜별로 합산 (취소 제외). amounts[0]=1일 … 인덱스는 (일-1).
+function byDayOfMonth(mk) {
+  const [y, m] = mk.split('-').map(Number);
+  const last = new Date(y, m, 0).getDate();          // 해당 달의 마지막 날짜
+  const amounts = new Array(last).fill(0);
+  for (const e of expensesOfMonth(mk)) {
+    if (e.cancelled) continue;
+    const d = parseInt(String(e.date).slice(8, 10), 10);
+    if (d >= 1 && d <= last) amounts[d - 1] += (Number(e.amount) || 0);
+  }
+  return { last, amounts };
+}
+
 // ── 렌더 ─────────────────────────────────────
 function render() {
   document.getElementById('monthLabel').textContent = fmtMonth(viewMonth);
@@ -591,6 +604,28 @@ function renderStats() {
         </div>
       `;
     }).join('');
+  }
+
+  // 일별 사용 — 세로 막대그래프, 금액은 천원 단위
+  const dayEl = document.getElementById('statsDaily');
+  const { amounts: dayAmts } = byDayOfMonth(viewMonth);
+  const dMax = Math.max(1, ...dayAmts);
+  const dTotal = dayAmts.reduce((s, v) => s + v, 0);
+  if (dTotal <= 0) {
+    dayEl.innerHTML = `<div class="muted">이번달 사용 없음</div>`;
+  } else {
+    const cols = dayAmts.map((v, i) => {
+      const h = v > 0 ? Math.max(4, Math.round(v / dMax * 100)) : 0;
+      const k = v > 0 ? Math.round(v / 1000).toLocaleString('ko-KR') : '';   // 천원 단위 반올림
+      const isMax = v > 0 && v === dMax;
+      return `
+        <div class="day-col">
+          <div class="day-val">${k}</div>
+          <div class="day-bar-wrap"><div class="day-bar${isMax ? ' max' : ''}" style="height:${h}%"></div></div>
+          <div class="day-num">${i + 1}</div>
+        </div>`;
+    }).join('');
+    dayEl.innerHTML = `<div class="daily-unit">단위: 천원</div><div class="daily-chart">${cols}</div>`;
   }
 
   const incomes = incomesOfMonth(viewMonth);
