@@ -492,7 +492,7 @@ function renderBook() {
     return dayHeader + `
       <div class="txn-row expense${e.cancelled ? ' cancelled' : ''}" data-id="${escapeAttr(e.id)}">
         <div class="left">
-          <div class="merchant">${escapeHtml(e.merchant || '(이름 없음)')}${e.cancelled ? ` <span class="cancel-badge" title="${escapeAttr((e.cancel_note || '취소') + ' · 탭하면 해제')}">${/중복/.test(e.cancel_note || '') ? '취소?' : '취소'}</span>` : ''}</div>
+          <div class="merchant">${escapeHtml(e.merchant || '(이름 없음)')}${e.cancelled ? ` <span class="cancel-badge">${escapeHtml(/중복/.test(e.cancel_note || '') ? '취소?' : (e.cancel_note || '취소'))}</span>` : ''}</div>
           ${metaHtml}
           ${e.note ? `<div class="note">${escapeHtml(e.note)}</div>` : ''}
         </div>
@@ -507,7 +507,10 @@ function renderBook() {
     el.onclick = () => {
       if (!getEditToken()) return;
       const ent = state.entries.find(x => x.id === el.dataset.id);
-      if (ent && ent.cancelled) {   // 취소(중복감지 포함) 해제 — 오인 시 실제 결제로 되돌림
+      // 중복으로 '자동' 취소된 건은 오인일 수 있어 한 번에 되돌리게 둔다.
+      // 손으로 매출취소한 건은 편집 화면을 열어 준다 — 거기서 내용도 고치고
+      // '취소 해제' 도 누를 수 있다. (예전에는 취소된 건을 아예 못 고쳤다.)
+      if (ent && ent.cancelled && /중복/.test(ent.cancel_note || '')) {
         if (confirm('취소를 해제하고 실제 결제로 되돌릴까요?')) {
           delete ent.cancelled; delete ent.cancel_note; delete ent.cancelled_at;
           saveLocal(); render();
@@ -971,6 +974,7 @@ function openTxnDialog(editId) {
   applyTypeMode();
   updateAmountDisplay();
   renderCategoryChips();
+  updateCancelBtn();
   if (!dlg.open) dlg.showModal();
 }
 
@@ -1028,9 +1032,11 @@ function saveTxn() {
     if (editTxnId) {
       const e = state.entries.find(x => x.id === editTxnId);
       if (!e) return;
-      // type 도 바뀔 수 있음 (지출 → 수입). 필드 재구성 — time·card 등 기존 값 보존.
+      // type 도 바뀔 수 있음 (지출 → 수입). 필드 재구성 — time·card·취소상태 등 기존 값 보존.
+      // 취소상태를 안 옮기면 취소된 수입을 고칠 때 조용히 되살아나 합계가 틀어진다.
       const newE = { id: e.id, type: 'income', date, amount, source: sourceName, note, ingest_source: e.ingest_source || 'manual',
-        ...(e.time && { time: e.time }), ...(e.card && { card: e.card }) };
+        ...(e.time && { time: e.time }), ...(e.card && { card: e.card }),
+        ...(e.cancelled ? { cancelled: e.cancelled, cancel_note: e.cancel_note, cancelled_at: e.cancelled_at } : {}) };
       const idx = state.entries.indexOf(e);
       state.entries[idx] = newE;
     } else {
@@ -1067,6 +1073,38 @@ function deleteTxn() {
   saveLocal();
   closeTxnDialog();
   render();
+}
+
+// 매출취소 — 삭제와 다르다. 기록은 목록에 남기되(줄 그어서) 합계·예산·그래프에서만 뺀다.
+// 카드 취소는 며칠 뒤 승인취소가 잡히는 일이 많아, 지워 버리면 나중에 대조할 근거가 없어진다.
+function toggleCancelTxn() {
+  if (!editTxnId) return;
+  if (!ensureEditable()) return;
+  const e = state.entries.find(x => x.id === editTxnId);
+  if (!e) return;
+
+  if (e.cancelled) {
+    if (!confirm('매출취소를 해제하고 실제 결제로 되돌릴까요?')) return;
+    delete e.cancelled; delete e.cancel_note; delete e.cancelled_at;
+  } else {
+    const what = e.type === 'income' ? '수입' : '지출';
+    if (!confirm(`이 ${what}을 매출취소 처리할까요?\n\n내역은 줄이 그어진 채 남고, 합계에서는 빠집니다.`)) return;
+    e.cancelled = true;
+    e.cancel_note = '매출취소';
+    e.cancelled_at = new Date().toISOString();
+  }
+  saveLocal();
+  closeTxnDialog();
+  render();
+}
+
+// 편집 중인 거래 상태에 맞춰 버튼 글자를 바꾼다
+function updateCancelBtn() {
+  const b = document.getElementById('txnCancel');
+  if (!b) return;
+  const e = editTxnId ? state.entries.find(x => x.id === editTxnId) : null;
+  b.textContent = (e && e.cancelled) ? '취소 해제' : '매출취소';
+  b.classList.toggle('on', !!(e && e.cancelled));
 }
 
 // ── 카테고리 추가 ─────────────────────────────
@@ -1163,6 +1201,7 @@ function escapeAttr(s) { return escapeHtml(s); }
   // 입력 모달
   document.getElementById('txnCancel').onclick = closeTxnDialog;
   document.getElementById('txnDelete').onclick = deleteTxn;
+  document.getElementById('txnCancel').onclick = toggleCancelTxn;
   document.getElementById('txnForm').onsubmit = (e) => { e.preventDefault(); saveTxn(); };
   document.querySelectorAll('.keypad .key').forEach(k => {
     k.onclick = () => pressKey(k.dataset.k);

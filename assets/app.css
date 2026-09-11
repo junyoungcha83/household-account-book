@@ -547,6 +547,13 @@ input { font-family: inherit; font-size: 16px; }  /* iOS 입력 줌 방지: 16px
 .btn.danger.ghost {
   background: transparent; color: var(--danger); border: 1px solid #fecaca;
 }
+/* 매출취소 — 삭제(빨강)와 구분되게 주황. 지우는 게 아니라 금액만 빼는 일이다. */
+.btn.warn.ghost {
+  background: transparent; color: #b45309; border: 1px solid #fcd9a4;
+}
+.btn.warn.ghost.on {            /* 이미 취소된 건 — 누르면 되돌린다 */
+  background: #fff7ed; color: #92400e; border-color: #f5bf78;
+}
 .btn:disabled { opacity: .5; cursor: not-allowed; }
 .link-btn {
   background: transparent; border: none;
@@ -733,8 +740,10 @@ body.read-only .fab-refresh { display: flex; }   /* 읽기 전용에서도 노�
   padding: 10px 16px calc(10px + var(--safe-bottom));
   display: flex;
   justify-content: center;
+  gap: 10px;
 }
 .dialog-footer.hidden { display: none; }
+.dialog-footer .btn { flex: 0 1 auto; }      /* 매출취소·삭제 두 개가 나란히 들어간다 */
 
 /* ── 자동 수신 점검 (ingest diag) ── */
 .ingest-diag { margin-top: 4px; }
