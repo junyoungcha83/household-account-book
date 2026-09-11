@@ -1100,7 +1100,7 @@ function toggleCancelTxn() {
 
 // 편집 중인 거래 상태에 맞춰 버튼 글자를 바꾼다
 function updateCancelBtn() {
-  const b = document.getElementById('txnCancel');
+  const b = document.getElementById('txnVoid');
   if (!b) return;
   const e = editTxnId ? state.entries.find(x => x.id === editTxnId) : null;
   b.textContent = (e && e.cancelled) ? '취소 해제' : '매출취소';
@@ -1201,7 +1201,7 @@ function escapeAttr(s) { return escapeHtml(s); }
   // 입력 모달
   document.getElementById('txnCancel').onclick = closeTxnDialog;
   document.getElementById('txnDelete').onclick = deleteTxn;
-  document.getElementById('txnCancel').onclick = toggleCancelTxn;
+  document.getElementById('txnVoid').onclick = toggleCancelTxn;
   document.getElementById('txnForm').onsubmit = (e) => { e.preventDefault(); saveTxn(); };
   document.querySelectorAll('.keypad .key').forEach(k => {
     k.onclick = () => pressKey(k.dataset.k);
