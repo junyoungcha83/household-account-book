@@ -75,6 +75,52 @@ function genId() {
   return 'e_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 }
 
+// ── 리비전 — 앱의 통째 PUT 이 매크로 거래를 지우지 않게 ──
+// 서버 쓰기마다 state.rev 를 올리고, 매크로(ingest)가 새로 만든 거래엔 rev_added,
+// 바꾼 거래(취소처리·금액보강 등)엔 rev_mod 도장을 찍는다. 앱은 GET 때 받은 rev 를
+// 그대로 PUT 에 실어 보내므로, 서버는 '앱이 아직 못 본' 변경(rev > 앱 rev)을 골라 살린다.
+function snapshotEntries(s) {
+  return new Map(s.entries.map(e => [e.id, JSON.stringify(e)]));
+}
+function stampIngest(s, before) {
+  const rev = (Number(s.rev) || 0) + 1;
+  s.rev = rev;
+  for (const e of s.entries) {
+    const prev = before.get(e.id);
+    if (prev === undefined) e.rev_added = rev;
+    else if (prev !== JSON.stringify(e)) e.rev_mod = rev;
+  }
+}
+// PUT 병합: incoming(앱이 보낸 전체)에 서버에만 있는 '앱이 모르는' 변경을 되살린다.
+// 앱이 본 뒤 지운 거래(rev_added ≤ 앱 rev)는 살리지 않으므로 앱의 삭제는 그대로 반영된다.
+function mergeOnPut(incoming, cur) {
+  const baseRev = Number(incoming.rev) || 0;
+  let restored = 0;
+  if (cur && Array.isArray(cur.entries) && Array.isArray(incoming.entries)) {
+    const curById = new Map(cur.entries.map(e => [e.id, e]));
+    incoming.entries = incoming.entries.map(e => {
+      const s = curById.get(e.id);
+      if (s && (Number(s.rev_mod) || 0) > baseRev && (Number(s.rev_mod) || 0) > (Number(e.rev_mod) || 0)) {
+        restored++;
+        return s;     // 앱이 못 본 서버측 수정(취소처리 등) 우선
+      }
+      return e;
+    });
+    const ids = new Set(incoming.entries.map(e => e.id));
+    for (const e of cur.entries) {
+      if (!ids.has(e.id) && (Number(e.rev_added) || 0) > baseRev) { incoming.entries.push(e); restored++; }
+    }
+  }
+  // 서버 전용 필드는 항상 서버 값 — 앱이 들고 있던 옛 로그·누적값으로 덮지 않게
+  if (cur) {
+    for (const k of ['ingest_log', 'card_cumulative', 'last_ingest_at', 'fx']) {
+      if (cur[k] !== undefined) incoming[k] = cur[k];
+    }
+  }
+  incoming.rev = Math.max(Number(cur && cur.rev) || 0, baseRev) + 1;
+  return restored;
+}
+
 // 자동수신(ingest) 점검 로그 — 성공/실패 모두 KV 문서 안 링버퍼에 적재.
 // 매크로→서버 경로가 어디서 끊기는지 앱 설정 탭에서 바로 보이게 하는 용도.
 // 최근 INGEST_LOG_MAX 건만 유지. preview 는 80자로 잘라 노출면 최소화.
@@ -474,8 +520,16 @@ export default {
         if (!isValidShape(parsed)) {
           return json({ error: 'invalid_shape' }, 400, cors);
         }
-        await env.HOUSEHOLD.put(KEY, body);
-        return json({ ok: true, bytes: body.length }, 200, cors);
+        // 통째 덮어쓰기 대신 병합 — 앱이 옛 상태로 PUT 해도 그 사이 들어온 매크로 거래는 보존
+        let cur = null;
+        try { const r = await env.HOUSEHOLD.get(KEY); cur = r ? migrateToV2(JSON.parse(r)) : null; } catch {}
+        const restored = (parsed.version === 2) ? mergeOnPut(parsed, cur) : 0;
+        const out = JSON.stringify(parsed);
+        if (out.length > MAX_BYTES) {
+          return json({ error: 'too_large', limit: MAX_BYTES, size: out.length }, 413, cors);
+        }
+        await env.HOUSEHOLD.put(KEY, out);
+        return json({ ok: true, bytes: out.length, rev: parsed.rev, restored }, 200, cors);
       }
 
       return json({ error: 'method_not_allowed' }, 405, cors);
@@ -506,6 +560,7 @@ export default {
       const card = String(body.card || '').trim().slice(0, 30);
 
       const stateObj = await readStateV2(env);
+      const before = snapshotEntries(stateObj);
 
       let entry;
       if (type === 'income') {
@@ -535,6 +590,7 @@ export default {
         detail: `${type === 'income' ? '수입' : '지출'} ${amount.toLocaleString()}원 (구조화 전송)`,
       });
 
+      stampIngest(stateObj, before);
       const newRaw = JSON.stringify(stateObj);
       if (newRaw.length > MAX_BYTES) {
         return json({ error: 'too_large', limit: MAX_BYTES, size: newRaw.length }, 413, cors);
@@ -553,8 +609,10 @@ export default {
       // 인증 통과 후엔 성공·실패 모두 KV 점검 로그(ingest_log)에 적재한다.
       // 매크로→서버 경로가 어디서 끊기는지 앱 설정 탭에서 바로 보이게 하기 위함.
       const stateObj = await readStateV2(env);
+      const before = snapshotEntries(stateObj);
       const finish = async (logArgs, respBody, status) => {
         recordIngest(stateObj, logArgs);
+        stampIngest(stateObj, before);
         try { await env.HOUSEHOLD.put(KEY, JSON.stringify(stateObj)); } catch {}
         return json(respBody, status, cors);
       };
@@ -737,6 +795,7 @@ export default {
           recordIngest(stateObj, { result: 'cancel_unmatched', source: ingest_source,
             detail: `취소 ${parsed.amount.toLocaleString()}원 · 원거래 미발견(표시만)`, preview: smsText });
         }
+        stampIngest(stateObj, before);
         const rawC = JSON.stringify(stateObj);
         if (rawC.length > MAX_BYTES) return json({ error: 'too_large', limit: MAX_BYTES, size: rawC.length }, 413, cors);
         await env.HOUSEHOLD.put(KEY, rawC);
@@ -763,6 +822,7 @@ export default {
           stateObj.last_ingest_at = new Date().toISOString();
           recordIngest(stateObj, { result: 'unknown_amount_filled', source: ingest_source,
             detail: `금액미상 보강 ${parsed.amount.toLocaleString()}원 · ${ph.merchant}`, preview: smsText });
+          stampIngest(stateObj, before);
           const rawP = JSON.stringify(stateObj);
           if (rawP.length > MAX_BYTES) return json({ error: 'too_large', limit: MAX_BYTES, size: rawP.length }, 413, cors);
           await env.HOUSEHOLD.put(KEY, rawP);
@@ -792,6 +852,7 @@ export default {
             stateObj.last_ingest_at = new Date().toISOString();
             recordIngest(stateObj, { result: 'summary_confirmed', source: ingest_source,
               detail: `요약복구→상세확인 ${parsed.amount.toLocaleString()}원 · ${dup.merchant}`, preview: smsText });
+            stampIngest(stateObj, before);
             const rawU = JSON.stringify(stateObj);
             if (rawU.length > MAX_BYTES) return json({ error: 'too_large', limit: MAX_BYTES, size: rawU.length }, 413, cors);
             await env.HOUSEHOLD.put(KEY, rawU);
@@ -803,6 +864,7 @@ export default {
           stateObj.last_ingest_at = new Date().toISOString();
           recordIngest(stateObj, { result: 'dup_cancelled', source: ingest_source,
             detail: `중복감지 ${parsed.amount.toLocaleString()}원 · ${dup.merchant} → 원거래 취소처리`, preview: smsText });
+          stampIngest(stateObj, before);
           const rawD = JSON.stringify(stateObj);
           if (rawD.length > MAX_BYTES) return json({ error: 'too_large', limit: MAX_BYTES, size: rawD.length }, 413, cors);
           await env.HOUSEHOLD.put(KEY, rawD);
@@ -840,6 +902,7 @@ export default {
         preview: smsText,
       });
 
+      stampIngest(stateObj, before);
       const newRaw = JSON.stringify(stateObj);
       if (newRaw.length > MAX_BYTES) {
         return json({ error: 'too_large', limit: MAX_BYTES, size: newRaw.length }, 413, cors);

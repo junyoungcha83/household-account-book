@@ -87,6 +87,8 @@ function migrate(loaded) {
       //  fx: USD/KRW 환율 하루 캐시.
       card_cumulative: (loaded.card_cumulative && typeof loaded.card_cumulative === 'object') ? loaded.card_cumulative : undefined,
       fx: (loaded.fx && typeof loaded.fx === 'object') ? loaded.fx : undefined,
+      // 서버 리비전 — PUT 에 그대로 실어 보내면 서버가 '앱이 못 본 매크로 거래'를 골라 보존한다.
+      rev: Number(loaded.rev) || 0,
     };
   }
   // v1 → v2
@@ -152,23 +154,35 @@ function saveLocal() {
 
   setSyncStatus('pending');
   if (_saveTimer) clearTimeout(_saveTimer);
-  _saveTimer = setTimeout(pushToServer, SAVE_DEBOUNCE_MS);
+  _saveTimer = setTimeout(() => { _saveTimer = null; pushToServer(); }, SAVE_DEBOUNCE_MS);
 }
 
 async function pushToServer() {
   const token = getEditToken();
   if (!token) return;
   if (_saveCtrl) _saveCtrl.abort();
-  _saveCtrl = new AbortController();
+  const ctrl = _saveCtrl = new AbortController();
   setSyncStatus('saving');
   try {
     const res = await fetch(`${API_BASE}/api/data`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', 'X-Edit-Token': token },
       body: JSON.stringify(state),
-      signal: _saveCtrl.signal,
+      signal: ctrl.signal,
     });
-    if (res.ok) setSyncStatus('saved');
+    if (res.ok) {
+      setSyncStatus('saved');
+      // 서버가 이 앱이 못 본 매크로 거래를 보존(병합)했으면 즉시 받아와 화면에 반영
+      const r = await res.json().catch(() => null);
+      if (r && r.restored > 0 && !_saveTimer && _saveCtrl === ctrl) {
+        const remote = await fetchFromServer();
+        if (remote && !_saveTimer) {
+          state = migrate(remote);
+          try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) {}
+          render();
+        }
+      }
+    }
     else if (res.status === 401) {
       localStorage.removeItem(TOKEN_KEY);
       updateEditUI();
@@ -182,6 +196,9 @@ async function pushToServer() {
     else setSyncStatus('error');
   } catch (e) {
     if (e.name !== 'AbortError') setSyncStatus('error');
+  } finally {
+    // 끝난 요청 표시를 지워야 앱 복귀 시 서버 최신 상태를 다시 받는다(안 지우면 첫 저장 후 영영 skip)
+    if (_saveCtrl === ctrl) _saveCtrl = null;
   }
 }
 
