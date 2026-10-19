@@ -140,18 +140,25 @@ function recordIngest(stateObj, { result, source, detail, preview }) {
 }
 
 // 카드앱 '요약 푸시' 파싱 — 예: "금화갈매기 / 신용(일시불,2*4*) / 06.19 20:06 / 누적이용금액 8,204,902원"
-// 단건 금액은 없지만 카드별 '누적이용금액'을 줌 → 직전 누적과의 차이로 거래액 복구(상세 알림 미수신 대비).
+// 단건 금액은 없지만 '누적이용금액'을 줌 → 직전 누적과의 차이로 거래액 복구(상세 알림 미수신 대비).
+// 누적 없는 변형도 있음 — 예: "할인예정 5,640원 / 신용(일시불,2*4*) / 10.18 20:22 / OO주유소"
+// (할인예정액은 결제금액이 아님). 이때 cumulative 는 null.
 function parseCardSummary(text) {
   if (!text) return null;
   const t = String(text).replace(/ /g, ' ');
   const cum = t.match(/누적\s*이용금액\s*([\d,]+)\s*원/);
-  if (!cum) return null;
-  const cumulative = parseInt(cum[1].replace(/,/g, ''), 10);
-  if (!(cumulative > 0)) return null;
+  let cumulative = null;
+  if (cum) {
+    cumulative = parseInt(cum[1].replace(/,/g, ''), 10);
+    if (!(cumulative > 0)) return null;
+  }
   const cardM = t.match(/\((?:[^,)]*,)?\s*([0-9][0-9*]+)\s*\)/);     // (일시불,2*4*) → 2*4*
   const card = cardM ? cardM[1] : '';
-  const merM = t.match(/^\s*([^/\n]+?)\s*\/\s*(?:신용|체크|할부)/);    // 첫 세그먼트 = 가맹점
-  const merchant = merM ? merM[1].trim() : '';
+  // 가맹점 = 결제구분·일시·금액 라벨이 아닌 첫 세그먼트(보통 맨 앞, 할인예정형은 맨 뒤).
+  const merchant = t.split(/\s*\/\s*/).map(s => s.trim()).find(s =>
+    s && !/^(?:신용|체크|할부)/.test(s) && !/^\d{1,2}[.\/]\d{1,2}\s+\d{1,2}:\d{2}$/.test(s) &&
+    !/(?:누적|할인|적립|예정)/.test(s) && !/^[\d,]+\s*원$/.test(s)) || '';
+  if (cumulative === null && !(card && merchant)) return null;     // 누적도 없으면 카드·가맹점은 있어야 요약으로 인정
   let date = '', time = '';
   const today = new Date();
   const dm = t.match(/(\d{1,2})[.\/](\d{1,2})\s+(\d{1,2}):(\d{2})/);  // MM.DD HH:MM
@@ -168,6 +175,24 @@ function parseCardSummary(text) {
   }
   if (!date) date = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
   return { merchant, card, date, time, cumulative };
+}
+
+// 하나카드 누적이용금액은 카드(1*7*·2*4*)별이 아니라 계좌 하나의 합계 — 두 카드 알림의 누적이 번갈아 오른다.
+// card_cumulative.hana = { cum: 직전 요약 누적, since: [직전 요약 이후 상세문자로 기록된 하나카드 지출 id] }.
+// 차분에서 since 의 금액을 빼야 요약 사이에 이미 기록된 결제가 복구액에 섞이지 않는다.
+// id 로 들고 있으므로 앱에서 금액·분류를 고쳐도(앱 저장은 부가필드를 버림) 고친 금액 기준으로 계산된다.
+function hanaAccount(s) {
+  if (!s.card_cumulative || typeof s.card_cumulative !== 'object') s.card_cumulative = {};
+  const a = s.card_cumulative.hana;
+  return (a && typeof a === 'object' && typeof a.cum === 'number') ? a : null;
+}
+function noteHanaSince(s, entry) {
+  if (!entry || entry.type !== 'expense' || !/하나/.test(entry.card || '')) return;
+  const a = hanaAccount(s);
+  if (!a) return;
+  const since = Array.isArray(a.since) ? a.since : [];
+  if (!since.includes(entry.id)) since.push(entry.id);
+  a.since = since.slice(-50);
 }
 
 // v1 (transactions + incomes) → v2 (entries + type) 자동 마이그레이션. idempotent.
@@ -583,6 +608,7 @@ export default {
         };
       }
       stateObj.entries.push(entry);
+      noteHanaSince(stateObj, entry);
       // 자동 ingest heartbeat — 매크로가 살아있는지 프론트에서 가시화하기 위한 신호
       stateObj.last_ingest_at = new Date().toISOString();
       recordIngest(stateObj, {
@@ -692,17 +718,72 @@ export default {
               { result: 'card_push_skipped', source: ingest_source, detail: '카드앱 요약 알림(형식 불명) — 건너뜀', preview: smsText },
               { ok: true, skipped: 'card_push_summary' }, 200);
           }
-          if (!stateObj.card_cumulative || typeof stateObj.card_cumulative !== 'object') stateObj.card_cumulative = {};
-          const prev = stateObj.card_cumulative[sm.card];
-          stateObj.card_cumulative[sm.card] = sm.cumulative;     // 항상 최신 누적 갱신
+          const acct = hanaAccount(stateObj);
           stateObj.last_ingest_at = new Date().toISOString();
           const within1d = (d) => { try { return Math.abs(new Date(sm.date + 'T00:00:00') - new Date(d + 'T00:00:00')) <= 24 * 3600 * 1000; } catch { return false; } };
-          const delta = (typeof prev === 'number') ? sm.cumulative - prev : null;
-          if (delta === null || delta === 0) {                   // 첫 관측(기준선 seed) 또는 동일 요약 재수신 → 기록 안 함
+          const pushUnknown = (note) => {
+            const ph = {
+              id: genId(), type: 'expense', date: sm.date, amount: 0, amount_unknown: true,
+              merchant: sm.merchant || '(가맹점 미상)', category: classifyCategory(sm.merchant, stateObj.category_rules, stateObj.categories),
+              note, source: 'card-summary-unknown', ...(sm.time && { time: sm.time }), ...(sm.card && { card: '하나' + sm.card }),
+            };
+            stateObj.entries.push(ph);
+            return ph;
+          };
+
+          if (sm.cumulative === null) {
+            // 누적 없는 요약(할인예정형) — 결제금액을 알 길이 없다. 같은 결제의 상세가 이미 기록됐으면 넘어가고,
+            // 없으면 '금액미상'으로 남겨 앱에서 금액만 채우게 한다(조용히 버리지 않음).
+            const already = [...stateObj.entries].reverse().find(e =>
+              e.type === 'expense' && !e.cancelled &&
+              (e.card || '').includes(sm.card) && within1d(e.date || '') &&
+              (((e.merchant || '').includes(sm.merchant) || sm.merchant.includes(e.merchant || '')) || (sm.time && e.time === sm.time)));
+            if (already) {
+              return finish(
+                { result: 'summary_seen', source: ingest_source,
+                  detail: `요약(누적없음) — 기존거래 있음(${already.merchant})`, preview: smsText },
+                { ok: true, summary: 'seen' }, 200);
+            }
+            const ph = pushUnknown('금액미상 — 카드앱 알림에 결제금액 없음(상세문자 미수신). 금액 입력 필요');
+            noteHanaSince(stateObj, ph);
+            return finish(
+              { result: 'summary_unknown_amount', source: ingest_source,
+                detail: `금액미상 기록 · ${ph.merchant} (누적 없는 알림·상세 미수신) — 앱에서 금액 입력 필요`, preview: smsText },
+              { ok: true, summary: 'unknown_amount' }, 200);
+          }
+
+          if (!acct) {                                            // 계좌 단위 첫 관측 — 기준선만 저장
+            stateObj.card_cumulative.hana = { cum: sm.cumulative, since: [] };
             return finish(
               { result: 'summary_seen', source: ingest_source,
-                detail: `요약 누적 ${sm.cumulative.toLocaleString()}원 저장(${sm.card || '?'})`, preview: smsText },
+                detail: `요약 누적 ${sm.cumulative.toLocaleString()}원 기준선 저장(하나 계좌)`, preview: smsText },
               { ok: true, summary: 'seen' }, 200);
+          }
+          // 직전 요약 이후 상세문자로 이미 기록된 하나카드 지출(앱에서 지웠거나 취소된 건 제외).
+          const sinceEntries = (Array.isArray(acct.since) ? acct.since : [])
+            .map(id => stateObj.entries.find(e => e.id === id)).filter(e => e && !e.cancelled);
+          const known = sinceEntries.filter(e => !e.amount_unknown).reduce((s, e) => s + (Number(e.amount) || 0), 0);
+          const unknownSince = sinceEntries.filter(e => e.amount_unknown);
+          const cumDelta = sm.cumulative - acct.cum;
+          acct.cum = sm.cumulative;                               // 항상 최신 누적 갱신
+          acct.since = [];
+          const delta = cumDelta - known;                         // 이번 요약 결제분(추정)
+          if (cumDelta === 0 || delta === 0) {                    // 동일 요약 재수신 또는 상세로 이미 다 기록됨
+            return finish(
+              { result: cumDelta === 0 ? 'summary_seen' : 'summary_matched', source: ingest_source,
+                detail: cumDelta === 0
+                  ? `요약 누적 ${sm.cumulative.toLocaleString()}원 저장(하나 계좌)`
+                  : `요약차분 ${cumDelta.toLocaleString()}원 — 상세로 기록된 ${sinceEntries.length}건과 일치`, preview: smsText },
+              { ok: true, summary: cumDelta === 0 ? 'seen' : 'matched' }, 200);
+          }
+          if (delta > 0 && unknownSince.length) {
+            // 차분에 금액미상 건(예: 할인예정 알림만 온 결제)이 섞여 있어 이번 결제분만 떼어낼 수 없다.
+            const names = unknownSince.map(e => e.merchant).join(', ');
+            const ph = pushUnknown(`금액미상 — 누적 증가 ${delta.toLocaleString()}원 = 이 결제 + 금액미상(${names}) 합계. 나눠서 입력 필요`);
+            return finish(
+              { result: 'summary_unknown_amount', source: ingest_source,
+                detail: `금액미상 기록 · ${ph.merchant} (차분 ${delta.toLocaleString()}원에 금액미상 건 섞임)`, preview: smsText },
+              { ok: true, summary: 'unknown_amount' }, 200);
           }
           if (delta < 0) {
             // 누적금액이 오히려 줄어든 채 새 요약 도착 = 상세문자 미수신 + 취소/리셋으로 차분 역산 불가.
@@ -819,6 +900,7 @@ export default {
           if (parsed.time) ph.time = parsed.time;
           ph.category = classifyCategory(parsed.merchant, stateObj.category_rules, stateObj.categories);
           ph.note = note || '';
+          noteHanaSince(stateObj, ph);
           stateObj.last_ingest_at = new Date().toISOString();
           recordIngest(stateObj, { result: 'unknown_amount_filled', source: ingest_source,
             detail: `금액미상 보강 ${parsed.amount.toLocaleString()}원 · ${ph.merchant}`, preview: smsText });
@@ -892,6 +974,7 @@ export default {
         };
       }
       stateObj.entries.push(entry);
+      noteHanaSince(stateObj, entry);
       // 자동 ingest heartbeat — 매크로가 살아있는지 프론트에서 가시화하기 위한 신호
       stateObj.last_ingest_at = new Date().toISOString();
       recordIngest(stateObj, {
