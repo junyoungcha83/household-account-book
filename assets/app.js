@@ -1179,6 +1179,35 @@ async function refreshFromServer() {
 }
 
 // ── 공통 ─────────────────────────────────────
+// ── 예산안 책정 — 지난 3개월(이번 달 제외) 카테고리별 평균으로 이번 달 예산을 채운다 ──
+// 교육비·교통비·학원비는 평균 그대로, 나머지는 평균의 90%(10% 절감). 1,000원 단위 반올림. 취소된 거래는 제외.
+const BUDGET_FULL_CATS = ['교육비', '교통비', '학원비'];
+function planBudget() {
+  if (!ensureEditable()) return;
+  const cur = monthKey(new Date());
+  const months = [1, 2, 3].map(i => shiftMonth(cur, -i));
+  const sums = {};
+  for (const mk of months) {
+    const b = byCategoryOfMonth(mk);
+    for (const c in b) sums[c] = (sums[c] || 0) + b[c];
+  }
+  const by = {}; let total = 0;
+  for (const c of state.categories) {
+    const avg = (sums[c] || 0) / months.length;
+    const v = Math.round((BUDGET_FULL_CATS.includes(c) ? avg : avg * 0.9) / 1000) * 1000;
+    by[c] = v; total += v;
+  }
+  const prev = state.budgets[cur];
+  const hasPrev = prev && (prev.total || Object.values(prev.by_category || {}).some(v => v));
+  if (hasPrev && !confirm(`${cur} 예산이 이미 입력돼 있습니다.\n예산안(${fmtWon(total)})으로 바꿀까요?`)) return;
+  state.budgets[cur] = { total, by_category: by };
+  saveLocal();
+  viewMonth = cur;
+  render();
+  const msg = document.getElementById('budgetPlanMsg');
+  if (msg) msg.textContent = `${cur} 예산을 책정했습니다 — 합계 ${fmtWon(total)} (기준: ${months[2]}~${months[0]} 평균). 아래에서 칸별로 고칠 수 있습니다.`;
+}
+
 function ensureEditable() {
   if (!getEditToken()) { alert('편집 비밀번호를 먼저 입력하세요 (헤더 🔒).'); return false; }
   return true;
@@ -1237,6 +1266,7 @@ function escapeAttr(s) { return escapeHtml(s); }
   // 설정
   document.getElementById('btnTokenEdit').onclick = promptEditToken;
   document.getElementById('btnCatAdd').onclick    = addCategory;
+  document.getElementById('btnBudgetPlan').onclick = planBudget;
 
   // 입력 모달 type 토글
   document.querySelectorAll('.type-toggle .tt-btn').forEach(b => {
