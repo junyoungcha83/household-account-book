@@ -147,6 +147,7 @@ input { font-family: inherit; font-size: 16px; }  /* iOS 입력 줌 방지: 16px
   font-size: .78rem; opacity: .9;
   margin-top: 6px;
 }
+.summary-card .budget-line .pace.fast { color: #fecaca; font-weight: 700; }   /* 지난 기간보다 빨리 쓰는 중 */
 .summary-card .progress {
   margin-top: 10px;
   height: 8px; border-radius: 99px;

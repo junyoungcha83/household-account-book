@@ -407,6 +407,13 @@ function renderBook() {
   const total = bud.total || 0;
   const pct = total > 0 ? Math.min(100, Math.round(used / total * 100)) : 0;
   const over = total > 0 && used > total;
+  // 기간대비 사용률 — 이번 달만: 오늘까지 지난 날짜 비율만큼의 예산 대비 사용액 (예: 15/30일이면 예산 절반 기준)
+  let pacePct = null;
+  if (total > 0 && viewMonth === monthKey(new Date())) {
+    const now = new Date();
+    const days = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    pacePct = Math.round(used / (total * now.getDate() / days) * 100);
+  }
   const card = document.getElementById('monthSummary');
   card.className = 'summary-card' + (over ? ' over' : '');
   card.innerHTML = `
@@ -425,7 +432,7 @@ function renderBook() {
       </div>
     </div>
     ${total > 0 ? `
-      <div class="budget-line">예산 ${fmtWon(total)} · ${pct}% ${over ? `(${fmtWon(used-total)} 초과)` : ''}</div>
+      <div class="budget-line">예산 ${fmtWon(total)} · ${pct}%${pacePct !== null ? ` <span class="pace${pacePct > 100 ? ' fast' : ''}">(기간대비 ${pacePct}%)</span>` : ''} ${over ? `(${fmtWon(used-total)} 초과)` : ''}</div>
       <div class="progress"><div class="progress-fill" style="width:${Math.min(100,pct)}%"></div></div>
     ` : `
       <div class="budget-line">예산 미설정 (설정에서 등록)</div>
